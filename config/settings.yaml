@@ -1,0 +1,27 @@
+models:
+  orchestrator: "gpt-oss:120b-cloud"
+  extractor: "gpt-oss:20b-cloud"
+  enricher: "hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M"
+  validator: "hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M"
+
+crawling:
+  max_concurrent: 10
+  timeout: 30
+  retry_attempts: 3
+  fallback_to_firecrawl: true
+
+extraction:
+  fields:
+    - name
+    - role
+    - linkedin
+    - company
+    - company_domain
+    - email
+    - phone_number
+  confidence_threshold: 0.7
+
+validation:
+  email_validation: true
+  phone_validation: true
+  url_validation: true
