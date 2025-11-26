@@ -1,0 +1,49 @@
+# Core dependencies for LangExtract-based B2B Lead Generation Pipeline
+
+# Agent orchestration
+agno>=0.6.0
+
+# Browser automation
+browser-use>=0.2.0
+
+# LLM and extraction
+langextract>=1.0.0
+ollama>=0.4.0
+llama-cpp-python>=0.2.0
+
+# Data validation and schemas
+pydantic>=2.0.0
+email-validator>=2.0.0
+phonenumbers>=8.13.0
+
+# HTTP and web requests
+httpx>=0.25.0
+requests>=2.31.0
+
+# Async and concurrency
+asyncio
+aiohttp>=3.8.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Environment and configuration
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+# Logging and monitoring
+structlog>=23.0.0
+
+# Development and testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+black>=23.0.0
+isort>=5.12.0
+flake8>=6.0.0
+
+# Optional: Additional model support
+# torch>=2.0.0  # For local transformer models
+# transformers>=4.30.0  # For Hugging Face models
+# sentence-transformers>=2.2.0  # For embedding models
