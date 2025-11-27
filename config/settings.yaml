@@ -1,4 +1,5 @@
 models:
+  ollama_host: "http://localhost:11434"
   orchestrator: "gpt-oss:120b-cloud"
   extractor: "gpt-oss:20b-cloud"
   enricher: "hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M"
