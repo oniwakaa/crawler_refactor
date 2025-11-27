@@ -36,14 +36,22 @@ class FirecrawlClient:
             await self.client.aclose()
             self.client = None
 
-    async def search(self, query: str, max_results: int = 5) -> List[str]:
+    async def search(self, query: str, max_results: int = 5, **kwargs) -> List[str]:
         """
         Perform a web search and return a list of URLs.
         
         Args:
             query: Search query string
             max_results: Maximum number of results to return
-            
+            **kwargs: Additional Firecrawl search parameters:
+                - sources: List of sources to search (default ["web"])
+                - country: Country code for geo-targeting (e.g., "DE", "US")
+                - location: Location string for geo-targeting
+                - timeout: Request timeout in milliseconds
+                - ignoreInvalidURLs: Whether to exclude invalid URLs
+                - categories: Category filters (GitHub, Research, PDF)
+                - tbs: Time-based search parameter
+                
         Returns:
             List of URLs found by the search
         """
@@ -53,12 +61,29 @@ class FirecrawlClient:
             return []
 
         try:
-            # Firecrawl search endpoint
+            # Build payload with query parameters
             payload = {
                 "query": query,
                 "limit": max_results,
+                "sources": kwargs.get("sources", ["web"]),
                 "scrapeOptions": {"formats": ["markdown"]}
             }
+            
+            # Add optional parameters if provided
+            if "country" in kwargs:
+                payload["country"] = kwargs["country"]
+            if "location" in kwargs:
+                payload["location"] = kwargs["location"]
+            if "timeout" in kwargs:
+                payload["timeout"] = kwargs["timeout"]
+            if "ignoreInvalidURLs" in kwargs:
+                payload["ignoreInvalidURLs"] = kwargs["ignoreInvalidURLs"]
+            if "categories" in kwargs:
+                payload["categories"] = kwargs["categories"]
+            if "tbs" in kwargs:
+                payload["tbs"] = kwargs["tbs"]
+            
+            log.info("Firecrawl search parameters", parameters=payload)
             
             response = await self._make_request(
                 "POST",

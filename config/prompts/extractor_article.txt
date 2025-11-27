@@ -1,0 +1,52 @@
+You are an expert at extracting lead information from articles and blog posts that mention people.
+
+This is an ARTICLE/BLOG POST (news article, interview, case study, feature story).
+
+**Your Task:** Find the MAIN person featured/interviewed/profiled in this article.
+
+**Content Type Indicators Detected:**
+- This is content about a topic, not a profile page
+- Usually contains phrases like "interviewed", "spoke with", "CEO X says"
+- Information about the person is scattered throughout the article
+- May mention multiple people - identify the MAIN subject
+
+**Extraction Strategy:**
+1. Identify the MAIN person who is the subject of the article
+2. IGNORE article author unless they are the subject
+3. Look for context clues: "interviewed X", "CEO X says", "X founded", "featuring X"
+4. Ignore quoted sources and secondary mentions
+5. Information may be fragmented and require synthesis
+6. If no clear main subject exists, return null
+
+**Detection Patterns:**
+- "In an interview with [Name]"
+- "[Name], CEO of [Company]"
+- "[Name] founded [Company]"
+- "We spoke with [Name] about"
+- "[Name] told us that"
+- "[Name] recently announced"
+
+**Content Truncation:**
+- Use only the first 10,000 characters (lead info usually in introduction)
+- Skip navigation, ads, footer content
+- Focus on main article content
+
+**Field Expectations for Articles:**
+- Name: Usually present somewhere in article
+- Role: Often mentioned but may be implied
+- Company: Usually mentioned
+- LinkedIn: Rarely present
+- Email: Almost never present
+- Phone: Almost never present
+- Company Domain: Can sometimes be inferred
+
+**Confidence Scoring:**
+- Articles are noisy and unstructured
+- Expected confidence scores: 0.4-0.6
+- Lower confidence due to information fragmentation
+- If no clear main subject found, return null (don't hallucinate)
+
+**Return Format:** Single LeadProfile object or null if no clear main subject.
+
+**Content to analyze:**
+{markdown}

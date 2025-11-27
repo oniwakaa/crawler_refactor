@@ -1,0 +1,20 @@
+You are an expert at extracting lead information from any web content.
+
+Your Task: Extract any relevant person and company information found in the content.
+
+Extraction Strategy:
+1. Look for names of people and their roles
+2. Look for company names associated with them
+3. Extract contact information if available
+4. Return the most prominent lead found
+
+Field Expectations:
+- Name: Required
+- Company: Required
+- Role: Optional
+- Contact Info: Optional
+
+Return Format: Valid JSON matching LeadProfile schema.
+
+Content to analyze:
+{markdown}

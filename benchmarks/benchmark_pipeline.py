@@ -7,9 +7,13 @@ Measures performance across different query types and generates comprehensive re
 import asyncio
 import time
 import json
+import sys
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pipelines.b2b_lead_pipeline import B2BLeadPipeline, PipelineConfig
 from dotenv import load_dotenv

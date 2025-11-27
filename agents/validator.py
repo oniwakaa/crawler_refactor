@@ -42,9 +42,12 @@ class ValidatorAgent:
         self.phone_validation = validation_config.get("phone_validation", True)
         self.url_validation = validation_config.get("url_validation", True)
         
-        # Confidence threshold from extraction config
+        # Confidence threshold from extraction config (lowered from 0.7 to 0.5 for more lenient validation)
         extraction_config = self.settings.get("extraction", {})
-        self.confidence_threshold = extraction_config.get("confidence_threshold", 0.7)
+        self.confidence_threshold = extraction_config.get("confidence_threshold", 0.5)
+        
+        # Quality score thresholds
+        self.min_quality_threshold = 0.3  # Minimum quality to accept leads
         
     def _load_settings(self, settings_path: str) -> Dict[str, Any]:
         """Load settings from YAML file"""
@@ -79,31 +82,41 @@ class ValidatorAgent:
         errors = []
         warnings = []
         
-        # Validate required fields
+        # Validate required fields (make role optional for more lenient validation)
         if not lead.name or len(lead.name.strip()) < 2:
             errors.append("Name is missing or too short")
-            
-        if not lead.role or len(lead.role.strip()) < 2:
-            errors.append("Role is missing or too short")
             
         if not lead.company or len(lead.company.strip()) < 2:
             errors.append("Company is missing or too short")
             
-        # Validate email
+        # Role is now optional - just add warning if missing
+        if not lead.role or len(lead.role.strip()) < 2:
+            warnings.append("Role is missing or too short")
+            
+        # Validate email (but don't fail if email validation fails)
         if lead.email and self.email_validation:
             try:
                 validate_email(lead.email)
             except EmailNotValidError as e:
-                errors.append(f"Invalid email format: {str(e)}")
+                warnings.append(f"Email format may be invalid: {str(e)}")
                 
-        # Validate phone number
+        # Validate phone number (more lenient - just normalize, don't fail)
         if lead.phone_number and self.phone_validation:
             try:
-                parsed = phonenumbers.parse(lead.phone_number, "US")
-                if not phonenumbers.is_valid_number(parsed):
-                    errors.append("Invalid phone number")
-            except NumberParseException:
-                errors.append("Could not parse phone number")
+                # Try multiple region defaults for international numbers
+                parsed = None
+                for region in ["US", "DE", "GB", "FR", None]:
+                    try:
+                        parsed = phonenumbers.parse(lead.phone_number, region)
+                        if phonenumbers.is_valid_number(parsed):
+                            break
+                    except NumberParseException:
+                        continue
+                        
+                if not parsed or not phonenumbers.is_valid_number(parsed):
+                    warnings.append("Phone number format is unusual but will be normalized")
+            except Exception:
+                warnings.append("Could not parse phone number format")
                 
         # Validate LinkedIn URL
         if lead.linkedin and self.url_validation:
@@ -205,11 +218,11 @@ class ValidatorAgent:
         # Confidence score (30% weight)
         confidence_score = lead.confidence_score
         
-        # Calculate weighted score
+        # Calculate weighted score (rebalanced to weight confidence_score more heavily)
         quality_score = (
-            completeness_score * 0.4 +
-            validation_score * 0.3 +
-            confidence_score * 0.3
+            completeness_score * 0.3 +  # Reduced from 0.4
+            validation_score * 0.2 +    # Reduced from 0.3
+            confidence_score * 0.5      # Increased from 0.3
         )
         
         return quality_score

@@ -293,7 +293,7 @@ class B2BLeadPipeline:
                     }
                 ]
                 
-                lead_batch = orchestrator.aggregate_results(agent_outputs)
+                lead_batch = await orchestrator.aggregate_results(agent_outputs)
                 logger.info("Result aggregation completed", total_leads=len(lead_batch.leads))
                 return lead_batch
                 

@@ -5,6 +5,7 @@ import structlog
 from pathlib import Path
 import yaml
 
+from agents.query_builder import QueryBuilderAgent
 from tools.firecrawl_client import FirecrawlClient
 from tools.crawl4ai_client import Crawl4AIClient
 
@@ -31,6 +32,9 @@ class WebNavigatorAgent:
         crawling_config = self.settings.get("crawling", {})
         self.max_concurrent = crawling_config.get("max_concurrent", 10)
         self.fallback_to_firecrawl = crawling_config.get("fallback_to_firecrawl", True)
+        
+        # Initialize QueryBuilderAgent for query optimization
+        self.query_builder = QueryBuilderAgent()
         
     def _load_settings(self, settings_path: str) -> Dict[str, Any]:
         """Load settings from YAML file"""
@@ -72,10 +76,47 @@ class WebNavigatorAgent:
         
         start_time = time.time()
         
-        # Step 1: Search for URLs
+        # Step 1: Build optimized query
+        try:
+            log.info("Building optimized search query")
+            optimized_params = self.query_builder.build_firecrawl_parameters(query)
+            
+            # Log the optimization
+            log.info(
+                "Query optimization completed",
+                original_query=query,
+                optimized_query=optimized_params["query"],
+                reasoning=optimized_params.get("reasoning", ""),
+                exclude_terms=optimized_params.get("exclude_terms", []),
+                include_terms=optimized_params.get("include_terms", [])
+            )
+            
+        except Exception as e:
+            log.error("Query optimization failed", error=str(e))
+            # Use fallback query parameters
+            optimized_params = {
+                "query": query,
+                "limit": max_results,
+                "sources": ["web"],
+                "timeout": 60000,
+                "ignoreInvalidURLs": True
+            }
+            log.warning("Using fallback query parameters")
+            
+        # Step 2: Search for URLs
         try:
             async with self.firecrawl_client as fc_client:
-                urls = await fc_client.search(query, max_results)
+                # Extract search parameters from optimized_params
+                query = optimized_params["query"]
+                max_results_param = max_results
+                
+                # Extract additional parameters (excluding query)
+                additional_params = {
+                    key: value for key, value in optimized_params.items()
+                    if key not in ["query"]
+                }
+                
+                urls = await fc_client.search(query, max_results_param, **additional_params)
                 
                 if not urls:
                     log.warning("Search returned no URLs")
@@ -86,10 +127,10 @@ class WebNavigatorAgent:
                 # Limit URLs to max_results
                 urls = urls[:max_results]
                 
-                # Step 2: Fetch content with primary method (Crawl4AI)
+                # Step 3: Fetch content with primary method (Crawl4AI)
                 crawl4ai_results = await self._fetch_with_crawl4ai(urls)
                 
-                # Step 3: For failed fetches, use fallback if enabled
+                # Step 4: For failed fetches, use fallback if enabled
                 final_results = crawl4ai_results
                 
                 if self.fallback_to_firecrawl:
@@ -129,6 +170,16 @@ class WebNavigatorAgent:
                 for result in final_results:
                     method = result.get("method_used", "unknown")
                     method_distribution[method] = method_distribution.get(method, 0) + 1
+                
+                # Step 5: Log query optimization effectiveness
+                try:
+                    self.query_builder.log_optimization_metrics(
+                        original_query=query,
+                        optimized_params=optimized_params,
+                        urls_found=[result["url"] for result in final_results]
+                    )
+                except Exception as metrics_error:
+                    log.warning("Failed to log optimization metrics", error=str(metrics_error))
                 
                 log.info(
                     "Search and fetch completed",

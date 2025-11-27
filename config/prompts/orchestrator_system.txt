@@ -56,7 +56,8 @@ Return ONLY valid JSON matching this exact structure:
 ```json
 {
   "search_queries": [
-    "\"CTO\" OR \"Chief Technology Officer\" \"B2B SaaS\" Berlin",
+    "CTO \"B2B SaaS\" Berlin",
+    "\"Chief Technology Officer\" \"B2B SaaS\" Berlin",
     "\"Head of Engineering\" \"B2B software\" Berlin Germany",
     "technology leadership B2B SaaS Berlin contact"
   ],
@@ -73,7 +74,8 @@ Return ONLY valid JSON matching this exact structure:
 ```json
 {
   "search_queries": [
-    "\"Marketing Director\" OR \"VP Marketing\" enterprise software Germany",
+    "\"Marketing Director\" enterprise software Germany",
+    "\"VP Marketing\" enterprise software Germany",
     "\"Head of Marketing\" \"200-500 employees\" software company Germany",
     "marketing leadership enterprise software Germany contact",
     "CMO enterprise software companies Germany team"
@@ -125,7 +127,8 @@ Return ONLY valid JSON matching this exact structure:
 ```json
 {
   "search_queries": [
-    "\"Sales Director\" OR \"Head of Sales\" Europe contact",
+    "\"Sales Director\" Europe contact",
+    "\"Head of Sales\" Europe contact",
     "\"VP Sales\" European companies team directory",
     "sales leadership Europe company contact information"
   ],

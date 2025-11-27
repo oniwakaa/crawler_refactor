@@ -17,7 +17,7 @@ class TaskPlan(BaseModel):
     target_fields: List[str] = Field(..., description="Lead fields to prioritize")
     max_results: int = Field(..., description="Maximum number of results to fetch")
     quality_threshold: float = Field(..., description="Minimum quality threshold (0.0-1.0)")
-    user_query: str = Field(..., description="Original user query")
+    user_query: Optional[str] = Field(None, description="Original user query")
 
 class OrchestratorAgent:
     """
