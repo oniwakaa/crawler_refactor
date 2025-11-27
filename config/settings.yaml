@@ -20,7 +20,7 @@ extraction:
     - company_domain
     - email
     - phone_number
-  confidence_threshold: 0.7
+  confidence_threshold: 0.5
 
 validation:
   email_validation: true
