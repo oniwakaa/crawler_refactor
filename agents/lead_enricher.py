@@ -10,6 +10,9 @@ import re
 from tools.llama_wrapper import LlamaWrapper
 from tools.crawl4ai_client import Crawl4AIClient
 from models.lead import LeadProfile
+from agents.linkedin_profile_enricher import LinkedInProfileEnricherAgent
+from agents.company_domain_agent import CompanyDomainAgent
+from agents.email_discovery_agent import EmailDiscoveryAgent
 
 logger = structlog.get_logger()
 
@@ -29,6 +32,9 @@ class LeadEnricherAgent:
         self.settings = self._load_settings(settings_path)
         self.llama_wrapper: Optional[LlamaWrapper] = None
         self.crawl4ai_client: Optional[Crawl4AIClient] = None
+        self.linkedin_agent: Optional[LinkedInProfileEnricherAgent] = None
+        self.domain_agent: Optional[CompanyDomainAgent] = None
+        self.email_agent: Optional[EmailDiscoveryAgent] = None
         
         # Load configuration
         models_config = self.settings.get("models", {})
@@ -49,10 +55,22 @@ class LeadEnricherAgent:
             ollama_host=self.settings.get("models", {}).get("ollama_host", "http://localhost:11434")
         )
         self.crawl4ai_client = Crawl4AIClient()
+        self.linkedin_agent = LinkedInProfileEnricherAgent(self.settings)
+        self.domain_agent = CompanyDomainAgent(self.settings)
+        self.email_agent = EmailDiscoveryAgent(self.settings)
+        await self.linkedin_agent.__aenter__()
+        await self.domain_agent.__aenter__()
+        await self.email_agent.__aenter__()
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
+        if self.linkedin_agent:
+            await self.linkedin_agent.__aexit__(exc_type, exc_val, exc_tb)
+        if self.domain_agent:
+            await self.domain_agent.__aexit__(exc_type, exc_val, exc_tb)
+        if self.email_agent:
+            await self.email_agent.__aexit__(exc_type, exc_val, exc_tb)
         # Clients will be closed by their own context managers
         pass
         
@@ -133,6 +151,84 @@ JSON Response:"""
         except Exception as e:
             log.error("Field inference failed", error=str(e))
             # Return original lead unchanged
+            return lead
+            
+        # Try to discover domain if missing
+        if not lead.company_domain and lead.company:
+            lead = await self.discover_company_domain(lead)
+            
+        # Try to discover email if missing
+        if not lead.email and lead.company_domain:
+            lead = await self.discover_email(lead)
+            
+        return lead
+            
+    async def discover_company_domain(self, lead: LeadProfile) -> LeadProfile:
+        """
+        Discover company domain if missing.
+        """
+        if lead.company_domain:
+            return lead
+            
+        if not lead.company or lead.company.lower() in ["unknown", "unknown company"]:
+            return lead
+            
+        log = logger.bind(lead_name=lead.name, company=lead.company)
+        log.info("Discovering company domain")
+        
+        try:
+            if not self.domain_agent:
+                log.warning("Domain agent not initialized")
+                return lead
+                
+            domain, metadata = await self.domain_agent.find_company_domain(lead.company)
+            
+            if domain:
+                updated_lead = lead.model_copy()
+                updated_lead.company_domain = domain
+                updated_lead.confidence_score = min(updated_lead.confidence_score + 0.1, 1.0)
+                log.info("Domain discovered", domain=domain)
+                return updated_lead
+            else:
+                log.info("Domain discovery failed", reason=metadata.get("reason"))
+                return lead
+                
+        except Exception as e:
+            log.error("Domain discovery failed", error=str(e))
+            return lead
+            
+    async def discover_email(self, lead: LeadProfile) -> LeadProfile:
+        """
+        Discover email if missing.
+        """
+        if lead.email:
+            return lead
+            
+        if not lead.company_domain:
+            return lead
+            
+        log = logger.bind(lead_name=lead.name, domain=lead.company_domain)
+        log.info("Discovering email")
+        
+        try:
+            if not self.email_agent:
+                log.warning("Email agent not initialized")
+                return lead
+                
+            email, metadata = await self.email_agent.discover_email(lead)
+            
+            if email:
+                updated_lead = lead.model_copy()
+                updated_lead.email = email
+                updated_lead.confidence_score = min(updated_lead.confidence_score + 0.1, 1.0)
+                log.info("Email discovered", email=email)
+                return updated_lead
+            else:
+                log.info("Email discovery failed", reason=metadata.get("reason"))
+                return lead
+                
+        except Exception as e:
+            log.error("Email discovery failed", error=str(e))
             return lead
             
     async def deduplicate_leads(self, leads: List[LeadProfile]) -> List[LeadProfile]:
@@ -226,32 +322,21 @@ JSON Response:"""
         log.info("Enriching from LinkedIn")
         
         try:
-            async with self.crawl4ai_client as crawler:
-                # Fetch LinkedIn profile
-                results = await crawler.batch_fetch([lead.linkedin])
+            if not self.linkedin_agent:
+                log.warning("LinkedIn agent not initialized")
+                return lead
                 
-                if not results or results[0].get("fetch_status") != "success":
-                    log.warning("Failed to fetch LinkedIn profile")
-                    return lead
-                    
-                result = results[0]
-                markdown = result.get("markdown", "")
-                
-                if not markdown:
-                    log.warning("Empty LinkedIn content")
-                    return lead
-                    
-                # Extract additional info using content extractor pattern
-                # For now, just log that we have the content
-                log.info(
-                    "LinkedIn profile fetched",
-                    content_length=len(markdown)
-                )
-                
-                # TODO: Implement LinkedIn-specific extraction
-                # This would involve parsing the LinkedIn profile structure
-                # and extracting additional fields like company, role, etc.
-                
+            enriched_lead, metadata = await self.linkedin_agent.enrich_from_linkedin_profile(lead)
+            
+            if metadata.get("status") == "success":
+                log.info("LinkedIn enrichment successful", 
+                         company=enriched_lead.company, 
+                         role=enriched_lead.role)
+                return enriched_lead
+            else:
+                log.warning("LinkedIn enrichment failed or skipped", 
+                           reason=metadata.get("reason"), 
+                           error=metadata.get("error"))
                 return lead
                 
         except Exception as e:

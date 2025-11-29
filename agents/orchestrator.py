@@ -1,13 +1,15 @@
 import json
 import time
-from typing import List, Dict, Any, Optional
+import asyncio
+from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
 import structlog
 from pathlib import Path
 import yaml
 
 from tools.llama_wrapper import LlamaWrapper
-from models.lead import LeadBatch
+from models.lead import LeadBatch, LeadProfile
+from agents.lead_enricher import LeadEnricherAgent
 
 logger = structlog.get_logger()
 
@@ -39,13 +41,18 @@ class OrchestratorAgent:
         self.model_name = self.settings.get("models", {}).get("orchestrator", "gpt-oss:120b-cloud")
         self.artifacts_dir = Path("artifacts")
         self.artifacts_dir.mkdir(exist_ok=True)
+        self.enricher: Optional[LeadEnricherAgent] = None
         
     async def __aenter__(self):
         """Async context manager entry"""
+        self.enricher = LeadEnricherAgent(self.settings_path)
+        await self.enricher.__aenter__()
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
+        if self.enricher:
+            await self.enricher.__aexit__(exc_type, exc_val, exc_tb)
         pass
         
     def _load_settings(self, settings_path: str) -> Dict[str, Any]:
@@ -265,3 +272,82 @@ JSON Response:"""
         else:
             # Return latest
             return max(matches, key=lambda p: p.stat().st_mtime)
+
+    async def coordinate_enrichment(self, leads: List[LeadProfile]) -> Tuple[List[LeadProfile], Dict[str, Any]]:
+        """
+        Coordinate the multi-stage enrichment process for a batch of leads.
+        
+        Args:
+            leads: List of leads to enrich
+            
+        Returns:
+            Tuple of (enriched_leads, aggregate_metadata)
+        """
+        if not self.enricher:
+            raise RuntimeError("Enricher not initialized")
+            
+        log = logger.bind(lead_count=len(leads))
+        log.info("Starting coordinated enrichment")
+        
+        enriched_leads = []
+        stats = {
+            "total": len(leads),
+            "linkedin_enriched": 0,
+            "domain_discovered": 0,
+            "email_discovered": 0,
+            "errors": 0
+        }
+        
+        for lead in leads:
+            lead_log = log.bind(lead_name=lead.name)
+            try:
+                # Stage 1: LinkedIn Enrichment
+                if lead.linkedin:
+                    try:
+                        async with asyncio.timeout(20): # 20s timeout for LinkedIn
+                            lead = await self.enricher.enrich_from_linkedin(lead)
+                            stats["linkedin_enriched"] += 1
+                    except TimeoutError:
+                        lead_log.warning("LinkedIn enrichment timed out")
+                    except Exception as e:
+                        lead_log.warning("LinkedIn enrichment failed", error=str(e))
+                
+                # Stage 2: Domain Discovery
+                if lead.company and not lead.company_domain:
+                    try:
+                        async with asyncio.timeout(20): # 20s timeout for Domain
+                            lead = await self.enricher.discover_company_domain(lead)
+                            if lead.company_domain:
+                                stats["domain_discovered"] += 1
+                    except TimeoutError:
+                        lead_log.warning("Domain discovery timed out")
+                    except Exception as e:
+                        lead_log.warning("Domain discovery failed", error=str(e))
+                        
+                # Stage 3: Email Discovery
+                if lead.company_domain and not lead.email:
+                    try:
+                        async with asyncio.timeout(30): # 30s timeout for Email (crawling)
+                            lead = await self.enricher.discover_email(lead)
+                            if lead.email:
+                                stats["email_discovered"] += 1
+                    except TimeoutError:
+                        lead_log.warning("Email discovery timed out")
+                    except Exception as e:
+                        lead_log.warning("Email discovery failed", error=str(e))
+                        
+                # Stage 4: General Inference (fallback)
+                try:
+                    lead = await self.enricher.infer_missing_fields(lead)
+                except Exception as e:
+                    lead_log.warning("General inference failed", error=str(e))
+                    
+                enriched_leads.append(lead)
+                
+            except Exception as e:
+                lead_log.error("Lead enrichment failed completely", error=str(e))
+                stats["errors"] += 1
+                enriched_leads.append(lead) # Return original on fatal error
+                
+        log.info("Enrichment completed", stats=stats)
+        return enriched_leads, stats

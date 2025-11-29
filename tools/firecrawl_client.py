@@ -147,11 +147,11 @@ class FirecrawlClient:
         try:
             # Use batch_scrape endpoint for multiple URLs
             # Firecrawl v2 uses scrapeOptions for formats
+            # Firecrawl v2 batch scrape might expect formats at top level or different structure
+            # Based on error "unrecognized_keys: scrapeOptions"
             payload = {
                 "urls": urls,
-                "scrapeOptions": {
-                    "formats": formats
-                }
+                "formats": formats
             }
             
             response = await self._make_request(
@@ -249,3 +249,32 @@ class FirecrawlClient:
         response = await self.client.request(method, url, **kwargs)
         response.raise_for_status()
         return response.json()
+
+    async def search_for_domain(self, query: str) -> List[str]:
+        """
+        Search for a company's domain.
+        
+        Args:
+            query: Search query (e.g. "Acme Corp official website")
+            
+        Returns:
+            List of potential URLs
+        """
+        # Use existing search method
+        return await self.search(query, max_results=3)
+        
+    async def fetch_homepage(self, url: str) -> Dict[str, Any]:
+        """
+        Fetch content of a homepage for validation.
+        
+        Args:
+            url: URL to fetch
+            
+        Returns:
+            Dictionary with content and metadata
+        """
+        # Use batch_scrape for single URL
+        results = await self.batch_scrape([url], formats=["markdown"])
+        if results:
+            return results[0]
+        return {"url": url, "markdown": "", "error": "No result returned"}

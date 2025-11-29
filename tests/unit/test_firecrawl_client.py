@@ -36,5 +36,4 @@ async def test_batch_scrape_payload(firecrawl_client):
         
         assert method == "POST"
         assert url.endswith("/batch/scrape")
-        assert "scrapeOptions" in kwargs["json"]
-        assert "formats" in kwargs["json"]["scrapeOptions"]
+        assert "formats" in kwargs["json"]

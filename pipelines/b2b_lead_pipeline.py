@@ -243,25 +243,20 @@ class B2BLeadPipeline:
     async def _step_enrich(self, leads: List[LeadProfile]) -> List[LeadProfile]:
         """Step 4: Lead enrichment and deduplication"""
         try:
-            async with self.enricher as enricher:
-                # Infer missing fields for each lead
-                enriched_leads = []
-                for lead in leads:
-                    try:
-                        enriched_lead = await enricher.infer_missing_fields(lead)
-                        enriched_leads.append(enriched_lead)
-                    except Exception as e:
-                        logger.warning("Lead enrichment failed", lead_name=lead.name, error=str(e))
-                        enriched_leads.append(lead)  # Keep original if enrichment fails
+            async with self.orchestrator as orchestrator:
+                # Use orchestrator to coordinate multi-stage enrichment
+                enriched_leads, stats = await orchestrator.coordinate_enrichment(leads)
                 
-                # Deduplicate leads
-                deduplicated_leads = await enricher.deduplicate_leads(enriched_leads)
                 logger.info(
                     "Lead enrichment completed",
                     original_count=len(leads),
-                    enriched_count=len(enriched_leads),
-                    deduplicated_count=len(deduplicated_leads)
+                    stats=stats
                 )
+                
+                # Deduplicate leads
+                async with self.enricher as enricher:
+                    deduplicated_leads = await enricher.deduplicate_leads(enriched_leads)
+                    
                 return deduplicated_leads
                 
         except Exception as e:

@@ -51,15 +51,12 @@ def test_validate_lead_valid(validator):
 
 def test_validate_lead_invalid_email(validator):
     # Pydantic validates email format at instantiation
-    from pydantic import ValidationError
-    try:
-        lead = LeadProfile(
-            name="Test User",
-            role="CEO",
-            company="Test Corp",
-            email="invalid-email",
-            confidence_score=0.9
-        )
-        assert False, "Should have raised ValidationError"
-    except ValidationError:
-        assert True
+    # But we use lenient validation now, so it should be None
+    lead = LeadProfile(
+        name="Test User",
+        role="CEO",
+        company="Test Corp",
+        email="invalid-email",
+        confidence_score=0.9
+    )
+    assert lead.email is None

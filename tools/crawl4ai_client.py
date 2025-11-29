@@ -149,3 +149,19 @@ class Crawl4AIClient:
             "timestamp": time.time(),
             "error": last_error
         }
+
+    async def fetch_linkedin_profile(self, linkedin_url: str) -> Dict[str, Any]:
+        """
+        Fetch a LinkedIn profile URL.
+        
+        Args:
+            linkedin_url: LinkedIn profile URL
+            
+        Returns:
+            Dictionary with fetch results
+        """
+        # For now, we reuse the standard fetch logic.
+        # In a real scenario, this might need specific headers or proxy handling.
+        # The user instructions said: "Use existing crawler with CrawlerRunConfig, CacheMode: BYPASS"
+        
+        return await self._fetch_with_retry(linkedin_url)
