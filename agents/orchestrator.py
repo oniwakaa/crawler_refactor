@@ -34,6 +34,7 @@ class OrchestratorAgent:
         Args:
             settings_path: Path to settings YAML file
         """
+        self.settings_path = settings_path
         self.settings = self._load_settings(settings_path)
         self.llama_wrapper = LlamaWrapper(
             ollama_host=self.settings.get("models", {}).get("ollama_host", "http://localhost:11434")
@@ -304,18 +305,19 @@ JSON Response:"""
                 # Stage 1: LinkedIn Enrichment
                 if lead.linkedin:
                     try:
-                        async with asyncio.timeout(20): # 20s timeout for LinkedIn
+                        async with asyncio.timeout(30): # Increased to 30s for LinkedIn
                             lead = await self.enricher.enrich_from_linkedin(lead)
                             stats["linkedin_enriched"] += 1
                     except TimeoutError:
-                        lead_log.warning("LinkedIn enrichment timed out")
+                        lead_log.warning("LinkedIn enrichment timed out, proceeding with partial data")
                     except Exception as e:
                         lead_log.warning("LinkedIn enrichment failed", error=str(e))
                 
                 # Stage 2: Domain Discovery
+                # Note: Domain discovery now includes fallback inference if search fails
                 if lead.company and not lead.company_domain:
                     try:
-                        async with asyncio.timeout(20): # 20s timeout for Domain
+                        async with asyncio.timeout(60): # Increased to 60s for Domain
                             lead = await self.enricher.discover_company_domain(lead)
                             if lead.company_domain:
                                 stats["domain_discovered"] += 1
@@ -327,7 +329,7 @@ JSON Response:"""
                 # Stage 3: Email Discovery
                 if lead.company_domain and not lead.email:
                     try:
-                        async with asyncio.timeout(30): # 30s timeout for Email (crawling)
+                        async with asyncio.timeout(90): # Increased to 90s for Email (crawling)
                             lead = await self.enricher.discover_email(lead)
                             if lead.email:
                                 stats["email_discovered"] += 1

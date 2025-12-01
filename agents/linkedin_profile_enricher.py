@@ -1,7 +1,8 @@
 import asyncio
 import json
+import re
 import structlog
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 
 from tools.crawl4ai_client import Crawl4AIClient
@@ -17,6 +18,8 @@ class LinkedInExtractionModel(BaseModel):
     company: Optional[str] = Field(None, description="Current company name")
     role: Optional[str] = Field(None, description="Current job title or role")
     company_linkedin_url: Optional[str] = Field(None, description="URL to company LinkedIn page")
+    email: Optional[str] = Field(None, description="Email address found in profile")
+    phone: Optional[str] = Field(None, description="Phone number found in profile")
 
 class LinkedInProfileEnricherAgent:
     """
@@ -94,16 +97,31 @@ class LinkedInProfileEnricherAgent:
                 metadata["reason"] = "empty_content"
                 return lead, metadata
                 
-            # 2. Extract Data
+            # 2. Regex Extraction (Pre-LLM)
+            # Extract emails/phones from raw markdown first to catch things LLM might miss
+            regex_emails = self._extract_emails_from_text(markdown_content)
+            regex_phones = self._extract_phones_from_text(markdown_content)
+            
+            # 3. Extract Data via LLM
             extracted_data = await self._extract_profile_data(markdown_content)
             metadata["stages"].append("extraction")
-            metadata["extracted_data"] = extracted_data
             
             if not extracted_data:
+                extracted_data = {}
+                
+            # Merge regex findings if LLM missed them
+            if regex_emails and not extracted_data.get("email"):
+                extracted_data["email"] = regex_emails[0]
+            if regex_phones and not extracted_data.get("phone"):
+                extracted_data["phone"] = regex_phones[0]
+                
+            metadata["extracted_data"] = extracted_data
+            
+            if not extracted_data and not regex_emails and not regex_phones:
                 log.warning("Failed to extract data from profile")
                 return lead, metadata
                 
-            # 3. Update Lead
+            # 4. Update Lead
             enriched_lead = self._update_lead(lead, extracted_data)
             metadata["status"] = "success"
             
@@ -137,7 +155,7 @@ class LinkedInProfileEnricherAgent:
 Profile Content:
 {content}
 
-Extract the current company and role.
+Extract the current company, role, and any contact info (email/phone).
 JSON Response:"""
 
         try:
@@ -145,7 +163,8 @@ JSON Response:"""
                 prompt=extraction_prompt,
                 schema=LinkedInExtractionModel,
                 model=self.model_name,
-                temperature=0.1
+                temperature=0.1,
+                num_ctx=8192  # Optimized context window for profile extraction
             )
             return result.model_dump() if result else None
         except Exception as e:
@@ -159,20 +178,54 @@ JSON Response:"""
         
         new_company = extracted_data.get("company")
         new_role = extracted_data.get("role")
+        new_email = extracted_data.get("email")
+        new_phone = extracted_data.get("phone")
         
         # Update if we have better data
-        # Logic: If current is "Unknown" or empty, and new is valid, update.
-        # If both exist, we might trust the LinkedIn one more, or keep existing.
-        # For now, let's prioritize LinkedIn data if it looks valid.
-        
         if new_company and new_company.lower() != "unknown company":
             updated_lead.company = new_company
             
         if new_role and new_role.lower() != "unknown role":
             updated_lead.role = new_role
             
+        if new_email and not updated_lead.email:
+            updated_lead.email = new_email
+            
+        if new_phone and not updated_lead.phone_number:
+            updated_lead.phone_number = new_phone
+            
         # Boost confidence if we found data
-        if new_company or new_role:
+        if new_company or new_role or new_email:
             updated_lead.confidence_score = min(updated_lead.confidence_score + 0.2, 1.0)
             
         return updated_lead
+
+    def _extract_emails_from_text(self, text: str) -> List[str]:
+        """Extract emails using regex."""
+        pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        matches = re.findall(pattern, text)
+        
+        junk = ["example.com", "domain.com", "email.com", "linkedin.com"]
+        valid_emails = []
+        
+        for email in matches:
+            email = email.lower()
+            if len(email) < 6 or len(email) > 100:
+                continue
+            if any(j in email for j in junk):
+                continue
+            valid_emails.append(email)
+            
+        return valid_emails
+
+    def _extract_phones_from_text(self, text: str) -> List[str]:
+        """Extract phone numbers using regex."""
+        phones = set()
+        
+        # Pattern 1: International E.164-ish
+        pattern_intl = r'\+(?:[0-9] ?){6,14}[0-9]'
+        matches_intl = re.findall(pattern_intl, text)
+        for p in matches_intl:
+            phones.add(p.strip())
+            
+        return list(phones)

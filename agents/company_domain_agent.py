@@ -97,7 +97,7 @@ class CompanyDomainAgent:
                 # but better to fetch the page content to be sure.
                 
                 content_result = await self.firecrawl_client.fetch_homepage(url)
-                content_excerpt = content_result.get("markdown", "")[:1000] # First 1000 chars
+                content_excerpt = content_result.get("markdown", "")[:500] # First 500 chars (reduced from 1000)
                 title = content_result.get("metadata", {}).get("title", "")
                 
                 score, reasoning = await self._validate_domain(company_name, url, title, content_excerpt)

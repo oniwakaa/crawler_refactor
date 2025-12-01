@@ -228,7 +228,7 @@ class ContentExtractorAgent:
                     schema=schema,
                     model=self.model_name,
                     temperature=0.1,
-                    max_tokens=1000,
+                    max_tokens=4096,
                 )
 
                 # Handle team page array response

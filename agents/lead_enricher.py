@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 import json
 from typing import List, Dict, Any, Optional
@@ -38,7 +39,7 @@ class LeadEnricherAgent:
         
         # Load configuration
         models_config = self.settings.get("models", {})
-        self.model_name = models_config.get("enricher", "hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M")
+        self.model_name = os.getenv("ENRICHER_MODEL") or models_config.get("enricher", "nvidia_NVIDIA-Nemotron-Nano-9B-v2")
         
     def _load_settings(self, settings_path: str) -> Dict[str, Any]:
         """Load settings from YAML file"""
@@ -123,7 +124,7 @@ JSON Response:"""
                     schema=LeadProfile,
                     model=self.model_name,
                     temperature=0.2,
-                    max_tokens=800
+                    max_tokens=4096
                 )
                 
                 # Preserve original source URL and timestamp
@@ -181,16 +182,28 @@ JSON Response:"""
                 log.warning("Domain agent not initialized")
                 return lead
                 
-            domain, metadata = await self.domain_agent.find_company_domain(lead.company)
+            domain = None
+            metadata = {}
+            
+            # Try search with timeout
+            try:
+                async with asyncio.timeout(20):
+                    domain, metadata = await self.domain_agent.find_company_domain(lead.company)
+            except TimeoutError:
+                log.warning("Domain search timed out, attempting fallback")
+                metadata = {"reason": "timeout"}
+            except Exception as e:
+                log.warning("Domain search failed", error=str(e))
+                metadata = {"reason": "error", "error": str(e)}
             
             if domain:
                 updated_lead = lead.model_copy()
                 updated_lead.company_domain = domain
                 updated_lead.confidence_score = min(updated_lead.confidence_score + 0.1, 1.0)
-                log.info("Domain discovered", domain=domain)
+                log.info("Domain discovered via search", domain=domain)
                 return updated_lead
             else:
-                log.info("Domain discovery failed", reason=metadata.get("reason"))
+                log.info("Domain search failed", reason=metadata.get("reason"))
                 return lead
                 
         except Exception as e:

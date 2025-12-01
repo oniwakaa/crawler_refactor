@@ -8,6 +8,11 @@ import httpx
 
 logger = structlog.get_logger()
 
+
+class JSONTruncationError(ValueError):
+    """Raised when JSON response is truncated and cannot be repaired."""
+    pass
+
 class LlamaWrapper:
     """
     Unified wrapper for Ollama cloud models and local GGUF models via llama-cpp-python.
@@ -43,6 +48,7 @@ class LlamaWrapper:
         model: str, 
         temperature: float = 0.7, 
         max_tokens: int = 1000,
+        num_ctx: int = 8192,
         **kwargs
     ) -> str:
         """
@@ -53,6 +59,7 @@ class LlamaWrapper:
             model: Model name (e.g., "gpt-oss:120b-cloud" or local GGUF path)
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
+            num_ctx: Context window size (default: 8192)
             **kwargs: Additional generation parameters
             
         Returns:
@@ -63,9 +70,9 @@ class LlamaWrapper:
         
         try:
             if self._is_local_gguf(model):
-                response = await self._generate_local(prompt, model, temperature, max_tokens, **kwargs)
+                response = await self._generate_local(prompt, model, temperature, max_tokens, num_ctx=num_ctx, **kwargs)
             else:
-                response = await self._generate_ollama(prompt, model, temperature, max_tokens, **kwargs)
+                response = await self._generate_ollama(prompt, model, temperature, max_tokens, num_ctx=num_ctx, **kwargs)
                 
             duration = time.time() - start_time
             self._update_stats(model, duration, len(prompt), len(response))
@@ -83,8 +90,9 @@ class LlamaWrapper:
         schema: Type[BaseModel],
         model: str,
         temperature: float = 0.3,
-        max_tokens: int = 2000,
+        max_tokens: int = 4096,
         max_retries: int = 2,
+        num_ctx: int = 16384,
         **kwargs
     ) -> BaseModel:
         """
@@ -97,6 +105,7 @@ class LlamaWrapper:
             temperature: Sampling temperature (lower for structured output)
             max_tokens: Maximum tokens to generate
             max_retries: Maximum number of retry attempts (default: 2)
+            num_ctx: Context window size for local models (default: 16384)
             **kwargs: Additional generation parameters
             
         Returns:
@@ -105,6 +114,7 @@ class LlamaWrapper:
         log = logger.bind(model=model, schema=schema.__name__)
         start_time = time.time()
         last_error = None
+        current_max_tokens = max_tokens  # Track current token limit for truncation retries
         
         # Retry loop - attempt extraction up to max_retries times
         for attempt in range(max_retries):
@@ -114,24 +124,25 @@ class LlamaWrapper:
                 if attempt > 0:
                     retry_reminder = "\n\nIMPORTANT: You MUST return valid JSON with at least 'name' and 'company' fields. Do not return empty responses."
                     current_prompt = prompt + retry_reminder
-                    log.info("Retrying extraction", attempt=attempt + 1, max_retries=max_retries)
+                    log.info("Retrying extraction", attempt=attempt + 1, max_retries=max_retries, 
+                           max_tokens=current_max_tokens)
                 
                 if self._is_local_gguf(model):
                     # Local models may not support native structured output
                     response = await self._extract_with_prompt_engineering(
-                        current_prompt, schema, model, temperature, max_tokens, **kwargs
+                        current_prompt, schema, model, temperature, current_max_tokens, num_ctx=num_ctx, **kwargs
                     )
                 else:
                     # Try Ollama native structured output first
                     try:
                         response = await self._extract_ollama_structured(
-                            current_prompt, schema, model, temperature, max_tokens, **kwargs
+                            current_prompt, schema, model, temperature, current_max_tokens, num_ctx=num_ctx, **kwargs
                         )
                     except Exception as e:
                         log.warning("Ollama structured output failed, falling back to prompt engineering", 
                                   error=str(e), attempt=attempt + 1)
                         response = await self._extract_with_prompt_engineering(
-                            current_prompt, schema, model, temperature, max_tokens, **kwargs
+                            current_prompt, schema, model, temperature, current_max_tokens, num_ctx=num_ctx, **kwargs
                         )
                 
                 # Success! Log and return
@@ -149,6 +160,28 @@ class LlamaWrapper:
                 else:
                     log.info("Structured extraction completed", duration=duration)
                 return response
+                
+            except JSONTruncationError as e:
+                # PHASE 1.3: Handle truncation specifically - increase tokens and retry
+                last_error = e
+                log.warning(
+                    "JSON truncation detected - increasing token limit for retry",
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    current_tokens=current_max_tokens,
+                    error_msg=str(e)[:200]
+                )
+                
+                # Double the token limit for next attempt
+                current_max_tokens = current_max_tokens * 2
+                log.info(f"Increased token limit to {current_max_tokens} for next attempt")
+                
+                # If this was the last attempt, we'll raise the error below
+                if attempt == max_retries - 1:
+                    break
+                    
+                # Otherwise, continue to next retry with higher token limit
+                continue
                 
             except (ValueError, json.JSONDecodeError) as e:
                 # Retryable errors: empty response, JSON parsing failure
@@ -215,10 +248,10 @@ class LlamaWrapper:
         return False
         
     async def _generate_ollama(
-        self, 
-        prompt: str, 
-        model: str, 
-        temperature: float, 
+        self,
+        prompt: str,
+        model: str,
+        temperature: float,
         max_tokens: int,
         **kwargs
     ) -> str:
@@ -241,20 +274,78 @@ class LlamaWrapper:
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": kwargs.get("num_ctx", 8192),
                 **kwargs
             },
             "stream": False
         }
         
+        # COMPREHENSIVE LOGGING: Log the exact payload being sent
+        logger.info("OLLAMA API REQUEST - PAYLOAD DETAILS",
+                   model=model,
+                   ollama_host=self.ollama_host,
+                   full_payload=payload,
+                   prompt_length=len(prompt),
+                   max_tokens=max_tokens,
+                   temperature=temperature,
+                   additional_options=kwargs)
+        
+        # Log prompt preview for context
+        logger.debug("OLLAMA API REQUEST - PROMPT PREVIEW",
+                    model=model,
+                    prompt_preview=prompt[:500] if len(prompt) > 500 else prompt)
+        
         # Client is managed by context manager (__aenter__/__aexit__)
+        start_time = time.time()
         response = await self.ollama_client.post(
             f"{self.ollama_host}/api/generate",
             json=payload
         )
+        request_duration = time.time() - start_time
+        
+        # Log HTTP response details
+        logger.info("OLLAMA API RESPONSE - HTTP DETAILS",
+                   model=model,
+                   status_code=response.status_code,
+                   headers=dict(response.headers),
+                   request_duration_seconds=request_duration)
+        
         response.raise_for_status()
         
         result = response.json()
-        return result.get("response", "")
+        response_text = result.get("response", "")
+        
+        # COMPREHENSIVE LOGGING: Log the raw response details
+        logger.info("OLLAMA API RESPONSE - RAW DETAILS",
+                   model=model,
+                   response_keys=list(result.keys()),
+                   response_length=len(response_text),
+                   response_characters=len(response_text),
+                   response_preview=response_text[:1000] if len(response_text) > 1000 else response_text,
+                   full_response_structure={k: type(v).__name__ for k, v in result.items()},
+                   done_status=result.get("done", "unknown"),
+                   context_length=result.get("context", []),
+                   total_duration=result.get("total_duration", 0),
+                   load_duration=result.get("load_duration", 0),
+                   prompt_eval_count=result.get("prompt_eval_count", 0),
+                   eval_count=result.get("eval_count", 0))
+        
+        # Check for truncation indicators
+        if "done" in result and not result["done"]:
+            logger.warning("OLLAMA RESPONSE INCOMPLETE - 'done' flag is False",
+                          model=model,
+                          done=result["done"],
+                          response_length=len(response_text))
+        
+        if "eval_count" in result and "num_predict" in payload["options"]:
+            if result["eval_count"] >= payload["options"]["num_predict"]:
+                logger.warning("OLLAMA RESPONSE TRUNCATED - hit token limit",
+                              model=model,
+                              eval_count=result["eval_count"],
+                              num_predict=payload["options"]["num_predict"],
+                              response_length=len(response_text))
+        
+        return response_text
         
     async def _generate_local(
         self, 
@@ -262,6 +353,7 @@ class LlamaWrapper:
         model_path: str, 
         temperature: float, 
         max_tokens: int,
+        num_ctx: int = 2048,
         **kwargs
     ) -> str:
         """
@@ -290,7 +382,7 @@ class LlamaWrapper:
             logger.info("Loading local model", model_path=model_path)
             self.loaded_models[model_path] = Llama(
                 model_path=model_path,
-                n_ctx=2048,
+                n_ctx=num_ctx,
                 verbose=False
             )
             
@@ -306,16 +398,22 @@ class LlamaWrapper:
         
         return output["choices"][0]["text"]
         
-    def clean_json_response(self, response_text: str) -> str:
+    def clean_json_response(self, response_text: str, detect_truncation: bool = True) -> str:
         """
-        Clean LLM response to ensure valid JSON.
+        Clean LLM response to ensure valid JSON with truncation detection.
         
         Args:
             response_text: Raw response from LLM
+            detect_truncation: If True, detect and attempt to repair truncated JSON
             
         Returns:
             Cleaned JSON string
+            
+        Raises:
+            JSONTruncationError: If JSON appears truncated and cannot be repaired
         """
+        original_text = response_text
+        
         # Strip whitespace
         response_text = response_text.strip()
         
@@ -360,7 +458,76 @@ class LlamaWrapper:
         response_text = response_text.replace('\n', ' ').replace('\r', ' ')
         response_text = ' '.join(response_text.split())
         
-        return response_text
+        # Try to parse immediately - if valid, return
+        try:
+            json.loads(response_text)
+            return response_text
+        except json.JSONDecodeError:
+            pass
+
+        # PHASE 1.2: Detect JSON truncation (only if parse failed)
+        if detect_truncation:
+            truncation_detected = False
+            truncation_reason = ""
+            
+            # Check for unterminated strings (odd number of quotes after last colon)
+            # NOTE: This is heuristic and can fail if the last value contains a colon
+            # We only run this if json.loads already failed
+            last_colon_pos = response_text.rfind(':')
+            if last_colon_pos != -1:
+                after_colon = response_text[last_colon_pos:]
+                quote_count = after_colon.count('"')
+                if quote_count % 2 == 1:
+                    truncation_detected = True
+                    truncation_reason = "unterminated_string"
+                    logger.warning("Detected unterminated string in JSON response", 
+                                 preview=response_text[-100:])
+            
+            # Check for missing closing braces
+            open_braces = response_text.count('{')
+            close_braces = response_text.count('}')
+            open_brackets = response_text.count('[')
+            close_brackets = response_text.count(']')
+            
+            if open_braces > close_braces or open_brackets > close_brackets:
+                truncation_detected = True
+                truncation_reason = f"missing_closing_braces ({{:{open_braces}/{close_braces}, [:{open_brackets}/{close_brackets})"
+                logger.warning("Detected missing closing braces in JSON", 
+                             open_braces=open_braces, close_braces=close_braces,
+                             open_brackets=open_brackets, close_brackets=close_brackets)
+            
+            # PHASE 1.2: Attempt to repair truncated JSON
+            if truncation_detected:
+                repaired_text = response_text
+                
+                # Repair unterminated strings
+                if truncation_reason == "unterminated_string":
+                    repaired_text = repaired_text.rstrip() + '"}'
+                    logger.info("Attempted to repair unterminated string")
+                
+                # Repair missing closing braces
+                elif "missing_closing_braces" in truncation_reason:
+                    braces_needed = open_braces - close_braces
+                    brackets_needed = open_brackets - close_brackets
+                    repaired_text = repaired_text + ('}' * braces_needed) + (']' * brackets_needed)
+                    logger.info("Attempted to repair missing braces", 
+                              added_braces=braces_needed, added_brackets=brackets_needed)
+                
+                # Validate repair attempt
+                try:
+                    json.loads(repaired_text)
+                    logger.info("JSON repair successful!")
+                    response_text = repaired_text
+                    return response_text
+                except json.JSONDecodeError:
+                    logger.error("JSON repair failed - truncation requires retry with more tokens",
+                               reason=truncation_reason,
+                               original_length=len(original_text))
+                    
+                    raise JSONTruncationError(
+                        f"JSON truncated ({truncation_reason}) and repair failed. "
+                        f"Original length: {len(original_text)} chars. Needs more tokens."
+                    )
 
     async def _extract_ollama_structured(
         self,
@@ -369,6 +536,7 @@ class LlamaWrapper:
         model: str,
         temperature: float,
         max_tokens: int,
+        num_ctx: int = 16384,
         **kwargs
     ) -> BaseModel:
         """
@@ -388,11 +556,26 @@ class LlamaWrapper:
         # Convert schema to JSON schema
         schema_dict = schema.model_json_schema()
         
-        # Log extraction attempt
-        logger.debug("Calling Ollama structured extraction", 
-                    model=model, 
-                    prompt_length=len(prompt), 
-                    prompt_preview=prompt[:300])
+        # COMPREHENSIVE LOGGING: Log the structured extraction request
+        logger.info("OLLAMA STRUCTURED EXTRACTION - REQUEST DETAILS",
+                   model=model,
+                   ollama_host=self.ollama_host,
+                   schema_name=schema.__name__,
+                   schema_fields=list(schema.model_fields.keys()),
+                   prompt_length=len(prompt),
+                   max_tokens=max_tokens,
+                   temperature=temperature,
+                   additional_options=kwargs)
+        
+        # Log prompt preview for context
+        logger.debug("OLLAMA STRUCTURED EXTRACTION - PROMPT PREVIEW",
+                    model=model,
+                    prompt_preview=prompt[:500] if len(prompt) > 500 else prompt)
+        
+        # Log schema structure
+        logger.debug("OLLAMA STRUCTURED EXTRACTION - SCHEMA DETAILS",
+                    model=model,
+                    schema_structure=schema_dict)
         
         payload = {
             "model": model,
@@ -401,30 +584,71 @@ class LlamaWrapper:
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": num_ctx,
                 **kwargs
             },
             "stream": False
         }
         
+        # COMPREHENSIVE LOGGING: Log the exact payload being sent
+        logger.info("OLLAMA STRUCTURED EXTRACTION - PAYLOAD DETAILS",
+                   model=model,
+                   full_payload=payload)
+        
+        # Client is managed by context manager (__aenter__/__aexit__)
+        start_time = time.time()
         response = await self.ollama_client.post(
             f"{self.ollama_host}/api/generate",
             json=payload
         )
+        request_duration = time.time() - start_time
+        
+        # Log HTTP response details
+        logger.info("OLLAMA STRUCTURED EXTRACTION - HTTP RESPONSE DETAILS",
+                   model=model,
+                   status_code=response.status_code,
+                   headers=dict(response.headers),
+                   request_duration_seconds=request_duration)
+        
         response.raise_for_status()
         
         result = response.json()
         response_text = result.get("response", "")
         
-        # Enhanced logging to diagnose empty responses
-        logger.debug("Ollama API response received", 
-                    response_keys=list(result.keys()),
-                    response_length=len(response_text),
-                    response_preview=response_text[:300] if response_text else "<EMPTY>")
+        # COMPREHENSIVE LOGGING: Log the raw response details
+        logger.info("OLLAMA STRUCTURED EXTRACTION - RAW RESPONSE DETAILS",
+                   model=model,
+                   response_keys=list(result.keys()),
+                   response_length=len(response_text),
+                   response_characters=len(response_text),
+                   response_preview=response_text[:1000] if len(response_text) > 1000 else response_text,
+                   full_response_structure={k: type(v).__name__ for k, v in result.items()},
+                   done_status=result.get("done", "unknown"),
+                   context_length=result.get("context", []),
+                   total_duration=result.get("total_duration", 0),
+                   load_duration=result.get("load_duration", 0),
+                   prompt_eval_count=result.get("prompt_eval_count", 0),
+                   eval_count=result.get("eval_count", 0))
+        
+        # Check for truncation indicators
+        if "done" in result and not result["done"]:
+            logger.warning("OLLAMA STRUCTURED RESPONSE INCOMPLETE - 'done' flag is False",
+                          model=model,
+                          done=result["done"],
+                          response_length=len(response_text))
+        
+        if "eval_count" in result and "num_predict" in payload["options"]:
+            if result["eval_count"] >= payload["options"]["num_predict"]:
+                logger.warning("OLLAMA STRUCTURED RESPONSE TRUNCATED - hit token limit",
+                              model=model,
+                              eval_count=result["eval_count"],
+                              num_predict=payload["options"]["num_predict"],
+                              response_length=len(response_text))
         
         # Check for empty response before processing
         if not response_text or response_text.strip() == "":
             logger.error(
-                "LLM returned empty response",
+                "LLM returned empty response in structured extraction",
                 model=model,
                 prompt_preview=prompt[:200],
                 full_api_response=result
@@ -438,10 +662,15 @@ class LlamaWrapper:
             
             # Check if cleaning resulted in empty string
             if not response_text or response_text.strip() == "":
-                logger.error("JSON cleaning resulted in empty string", original_response=result.get("response", "")[:500])
+                logger.error("JSON cleaning resulted in empty string in structured extraction",
+                           original_response=result.get("response", "")[:500])
                 raise ValueError("No valid JSON found in response after cleaning")
             
             data = json.loads(response_text)
+            logger.info("OLLAMA STRUCTURED EXTRACTION - SUCCESS",
+                       model=model,
+                       extracted_fields=list(data.keys()) if isinstance(data, dict) else "non-dict",
+                       data_length=len(str(data)))
             return schema(**data)
         except json.JSONDecodeError as e:
             # Try to find JSON object if mixed with text (fallback)
@@ -452,11 +681,17 @@ class LlamaWrapper:
                     json_str = json_match.group(0).replace('\n', ' ').replace('\r', ' ')
                     json_str = ' '.join(json_str.split())  # Normalize whitespace
                     data = json.loads(json_str)
+                    logger.info("OLLAMA STRUCTURED EXTRACTION - FALLBACK SUCCESS",
+                               model=model,
+                               extracted_fields=list(data.keys()) if isinstance(data, dict) else "non-dict")
                     return schema(**data)
             except Exception:
                 pass
                 
-            logger.error("Failed to parse structured response", error=str(e), response=response_text)
+            logger.error("Failed to parse structured response",
+                        model=model,
+                        error=str(e),
+                        response=response_text[:1000])
             raise
             
     async def _extract_with_prompt_engineering(
