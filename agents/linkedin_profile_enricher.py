@@ -13,6 +13,9 @@ logger = structlog.get_logger()
 
 from pydantic import BaseModel, Field
 
+# Define project root
+PROJECT_ROOT = Path(__file__).parent.parent
+
 class LinkedInExtractionModel(BaseModel):
     name: Optional[str] = Field(None, description="Full name of the person")
     company: Optional[str] = Field(None, description="Current company name")
@@ -138,7 +141,7 @@ class LinkedInProfileEnricherAgent:
             
     async def _extract_profile_data(self, content: str) -> Optional[Dict[str, Any]]:
         """Extract structured data from profile markdown using LLM."""
-        prompt_path = Path("config/prompts/enricher_linkedin_profile.txt")
+        prompt_path = PROJECT_ROOT / "config/prompts/enricher_linkedin_profile.txt"
         if not prompt_path.exists():
             logger.error(f"Prompt file not found: {prompt_path}")
             return None
