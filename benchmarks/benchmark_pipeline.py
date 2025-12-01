@@ -13,7 +13,8 @@ from typing import List, Dict, Any
 from datetime import datetime
 
 # Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from pipelines.b2b_lead_pipeline import B2BLeadPipeline, PipelineConfig
 from dotenv import load_dotenv
@@ -36,7 +37,7 @@ class PipelineBenchmark:
         config = PipelineConfig(
             query=query,
             max_results=max_results,
-            settings_path="config/settings.yaml"
+            settings_path=str(PROJECT_ROOT / "config/settings.yaml")
         )
         
         start_time = time.time()

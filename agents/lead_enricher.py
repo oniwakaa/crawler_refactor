@@ -17,13 +17,16 @@ from agents.email_discovery_agent import EmailDiscoveryAgent
 
 logger = structlog.get_logger()
 
+# Define project root
+PROJECT_ROOT = Path(__file__).parent.parent
+
 class LeadEnricherAgent:
     """
     Lead Enricher agent responsible for inferring missing fields and deduplicating leads.
     Uses LlamaWrapper for inference and maintains lead quality.
     """
     
-    def __init__(self, settings_path: str = "config/settings.yaml"):
+    def __init__(self, settings_path: str = str(PROJECT_ROOT / "config/settings.yaml")):
         """
         Initialize LeadEnricherAgent.
         
@@ -95,7 +98,7 @@ class LeadEnricherAgent:
             return lead
             
         # Load enrichment prompt
-        prompt_path = Path("config/prompts/enricher_inference.txt")
+        prompt_path = PROJECT_ROOT / "config/prompts/enricher_inference.txt"
         if not prompt_path.exists():
             raise FileNotFoundError(f"Enricher prompt not found: {prompt_path}")
             

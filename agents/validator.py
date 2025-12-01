@@ -13,6 +13,9 @@ from models.lead import LeadProfile
 
 logger = structlog.get_logger()
 
+# Define project root
+PROJECT_ROOT = Path(__file__).parent.parent
+
 class ValidationResult(BaseModel):
     """Validation result for a lead"""
     is_valid: bool
@@ -27,7 +30,7 @@ class ValidatorAgent:
     Uses regex patterns, phonenumbers library, and email-validator for validation.
     """
     
-    def __init__(self, settings_path: str = "config/settings.yaml"):
+    def __init__(self, settings_path: str = str(PROJECT_ROOT / "config/settings.yaml")):
         """
         Initialize ValidatorAgent.
         
