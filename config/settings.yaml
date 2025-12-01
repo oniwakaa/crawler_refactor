@@ -1,9 +1,9 @@
 models:
   ollama_host: "http://localhost:11434"
-  orchestrator: "llama3.1"
-  extractor: "llama3.1"
-  enricher: "llama3.1"
-  validator: "llama3.1"
+  orchestrator: "gpt-oss:120b-cloud"
+  extractor: "gpt-oss:20b-cloud"
+  enricher: "gpt-oss:20b-cloud"
+  validator: "gpt-oss:20b-cloud"
 
 crawling:
   max_concurrent: 10
