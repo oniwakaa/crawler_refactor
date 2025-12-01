@@ -3,7 +3,7 @@ models:
   orchestrator: "gpt-oss:120b-cloud"
   extractor: "gpt-oss:20b-cloud"
   enricher: "gpt-oss:20b-cloud"
-  validator: "hf.co/unsloth/SmolLM3-3B-GGUF:Q4_K_M"
+  validator: "gpt-oss:20b-cloud"
 
 crawling:
   max_concurrent: 10

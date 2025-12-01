@@ -12,6 +12,8 @@ from tools.llama_wrapper import LlamaWrapper
 
 logger = structlog.get_logger()
 
+# Define project root
+PROJECT_ROOT = Path(__file__).parent.parent
 
 class ContentExtractorAgent:
     """
@@ -19,7 +21,7 @@ class ContentExtractorAgent:
     Uses LlamaWrapper for LLM-based extraction with confidence scoring.
     """
 
-    def __init__(self, settings_path: str = "config/settings.yaml"):
+    def __init__(self, settings_path: str = str(PROJECT_ROOT / "config/settings.yaml")):
         """
         Initialize ContentExtractorAgent.
 
@@ -53,10 +55,10 @@ class ContentExtractorAgent:
     def _load_all_prompts(self) -> Dict[str, str]:
         """Load all content-type-specific prompt templates"""
         prompt_files = {
-            "profile": "config/prompts/extractor_lead_profile.txt",
-            "team_page": "config/prompts/extractor_team_page.txt",
-            "article": "config/prompts/extractor_article.txt",
-            "generic": "config/prompts/extractor_generic.txt",
+            "profile": PROJECT_ROOT / "config/prompts/extractor_lead_profile.txt",
+            "team_page": PROJECT_ROOT / "config/prompts/extractor_team_page.txt",
+            "article": PROJECT_ROOT / "config/prompts/extractor_article.txt",
+            "generic": PROJECT_ROOT / "config/prompts/extractor_generic.txt",
         }
 
         prompts = {}

@@ -11,13 +11,16 @@ from tools.crawl4ai_client import Crawl4AIClient
 
 logger = structlog.get_logger()
 
+# Define project root
+PROJECT_ROOT = Path(__file__).parent.parent
+
 class WebNavigatorAgent:
     """
     Web Navigator agent responsible for searching and fetching web content.
     Uses Firecrawl for search and both Crawl4AI (primary) and Firecrawl (fallback) for content fetching.
     """
     
-    def __init__(self, settings_path: str = "config/settings.yaml"):
+    def __init__(self, settings_path: str = str(PROJECT_ROOT / "config/settings.yaml")):
         """
         Initialize WebNavigatorAgent.
         

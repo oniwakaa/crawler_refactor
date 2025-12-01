@@ -20,7 +20,8 @@ import structlog
 import sys
 
 # Add project root to sys.path to allow imports from agents, models, etc.
-sys.path.append(str(Path(__file__).parent.parent))
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.append(str(PROJECT_ROOT))
 
 from agents.orchestrator import OrchestratorAgent, TaskPlan
 from agents.web_navigator import WebNavigatorAgent
@@ -55,7 +56,7 @@ class PipelineConfig:
     """Pipeline configuration"""
     query: str
     max_results: int = 50
-    settings_path: str = "config/settings.yaml"
+    settings_path: str = str(PROJECT_ROOT / "config/settings.yaml")
     output_path: Optional[str] = None
     verbose: bool = False
 
@@ -335,7 +336,7 @@ app = typer.Typer(help="B2B Lead Generation Pipeline")
 def run(
     query: str = typer.Argument(..., help="Search query for lead generation"),
     max_results: int = typer.Option(50, "--max-results", "-m", help="Maximum number of results"),
-    settings: str = typer.Option("config/settings.yaml", "--settings", "-s", help="Settings file path"),
+    settings: str = typer.Option(str(PROJECT_ROOT / "config/settings.yaml"), "--settings", "-s", help="Settings file path"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path (JSON)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
 ):
@@ -420,7 +421,7 @@ def run(
 
 @app.command()
 def validate_config(
-    settings: str = typer.Option("config/settings.yaml", "--settings", "-s", help="Settings file path"),
+    settings: str = typer.Option(str(PROJECT_ROOT / "config/settings.yaml"), "--settings", "-s", help="Settings file path"),
 ):
     """
     Validate pipeline configuration and dependencies.
@@ -445,12 +446,12 @@ def validate_config(
     
     # Check prompt files
     prompt_files = [
-        "config/prompts/orchestrator_system.txt",
-        "config/prompts/extractor_lead_profile.txt",
-        "config/prompts/enricher_inference.txt"
+        PROJECT_ROOT / "config/prompts/orchestrator_system.txt",
+        PROJECT_ROOT / "config/prompts/extractor_lead_profile.txt",
+        PROJECT_ROOT / "config/prompts/enricher_inference.txt"
     ]
     
-    missing_prompts = [f for f in prompt_files if not Path(f).exists()]
+    missing_prompts = [str(f) for f in prompt_files if not f.exists()]
     if missing_prompts:
         typer.echo(f"Warning: Missing prompt files: {', '.join(missing_prompts)}", err=True)
     

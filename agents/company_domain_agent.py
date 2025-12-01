@@ -9,6 +9,9 @@ from tools.llama_wrapper import LlamaWrapper
 
 logger = structlog.get_logger()
 
+# Define project root
+PROJECT_ROOT = Path(__file__).parent.parent
+
 class DomainValidationModel(BaseModel):
     confidence_score: float = Field(..., description="Confidence score between 0.0 and 1.0")
     reasoning: str = Field(..., description="Reasoning for the score")
@@ -130,7 +133,7 @@ class CompanyDomainAgent:
             
     async def _validate_domain(self, company_name: str, url: str, title: str, content: str) -> Tuple[float, str]:
         """Validate if a domain matches the company using LLM."""
-        prompt_path = Path("config/prompts/enricher_domain_validation.txt")
+        prompt_path = PROJECT_ROOT / "config/prompts/enricher_domain_validation.txt"
         if not prompt_path.exists():
             return 0.0, "Prompt missing"
             

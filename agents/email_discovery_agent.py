@@ -13,6 +13,9 @@ from models.lead import LeadProfile
 
 logger = structlog.get_logger()
 
+# Define project root
+PROJECT_ROOT = Path(__file__).parent.parent
+
 class EmailMatchModel(BaseModel):
     email: Optional[str] = Field(None, description="The best matching email address")
     confidence_score: float = Field(..., description="Confidence score between 0.0 and 1.0")
@@ -156,6 +159,9 @@ class EmailDiscoveryAgent:
         # Let's try to filter the results to match the domain loosely
         # or just trust the search relevance for "{Company} contact"
         
+        # Let's try to filter the results to match the domain loosely
+        # or just trust the search relevance for "{Company} contact"
+        
         relevant_urls = []
         domain_clean = domain.replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
         
@@ -258,7 +264,7 @@ class EmailDiscoveryAgent:
         
     async def _match_email(self, lead: LeadProfile, emails: List[str]) -> Tuple[Optional[str], float, str]:
         """Match discovered emails to the lead using LLM."""
-        prompt_path = Path("config/prompts/enricher_email_discovery.txt")
+        prompt_path = PROJECT_ROOT / "config/prompts/enricher_email_discovery.txt"
         if not prompt_path.exists():
             # Fallback prompt if file missing
             system_prompt = "You are an expert at matching emails to people."
