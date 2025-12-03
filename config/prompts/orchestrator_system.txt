@@ -30,6 +30,7 @@ Return ONLY valid JSON matching this exact structure:
    - For location-focused queries: Include city name + "companies" or "businesses"
    - For industry-focused queries: Include industry keywords + "company" + location
    - For company size queries: Include size indicators (e.g., "50-200 employees", "enterprise", "startup")
+   - **Source Prioritization**: Prioritize official company websites ("site:company.com"), LinkedIn Company pages, and reputable directories. Avoid relying solely on social media posts.
 
 3. **Target Fields Selection**:
    - Always include: name, role, company

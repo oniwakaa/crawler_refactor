@@ -254,9 +254,20 @@ class B2BLeadPipeline:
                     stats=stats
                 )
                 
-                # Deduplicate leads
+                # Explicitly trigger tool-based enrichment for each lead
+                fully_enriched_leads = []
                 async with self.enricher as enricher:
-                    deduplicated_leads = await enricher.deduplicate_leads(enriched_leads)
+                    for lead in enriched_leads:
+                        try:
+                            # infer_missing_fields handles domain/email discovery
+                            enriched_lead = await enricher.infer_missing_fields(lead)
+                            fully_enriched_leads.append(enriched_lead)
+                        except Exception as e:
+                            logger.error("Individual lead enrichment failed", error=str(e), lead_name=lead.name)
+                            fully_enriched_leads.append(lead)
+
+                    # Deduplicate leads
+                    deduplicated_leads = await enricher.deduplicate_leads(fully_enriched_leads)
                     
                 return deduplicated_leads
                 

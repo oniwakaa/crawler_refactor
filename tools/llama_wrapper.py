@@ -30,6 +30,7 @@ class LlamaWrapper:
         self.ollama_client = httpx.AsyncClient(timeout=httpx.Timeout(300.0))
         self.loaded_models: Dict[str, Any] = {}  # Cache for loaded models
         self.model_stats: Dict[str, Dict[str, Any]] = {}  # Track usage stats
+        self.last_interaction: Dict[str, Any] = {}  # Store last prompt/response for inspection
         
     async def __aenter__(self):
         """Async context manager entry."""
@@ -344,6 +345,16 @@ class LlamaWrapper:
                               eval_count=result["eval_count"],
                               num_predict=payload["options"]["num_predict"],
                               response_length=len(response_text))
+
+        # Store interaction details
+        self.last_interaction = {
+            "timestamp": time.time(),
+            "model": model,
+            "prompt": prompt,
+            "response": response_text,
+            "payload": payload,
+            "raw_result": result
+        }
         
         return response_text
         
@@ -395,6 +406,16 @@ class LlamaWrapper:
             temperature=temperature,
             **kwargs
         )
+
+        # Store interaction details
+        self.last_interaction = {
+            "timestamp": time.time(),
+            "model": model_path,
+            "prompt": prompt,
+            "response": output["choices"][0]["text"],
+            "payload": {"max_tokens": max_tokens, "temperature": temperature, **kwargs},
+            "raw_result": output
+        }
         
         return output["choices"][0]["text"]
         
@@ -671,6 +692,18 @@ class LlamaWrapper:
                        model=model,
                        extracted_fields=list(data.keys()) if isinstance(data, dict) else "non-dict",
                        data_length=len(str(data)))
+            
+            # Store interaction details
+            self.last_interaction = {
+                "timestamp": time.time(),
+                "model": model,
+                "prompt": prompt,
+                "response": response_text,
+                "payload": payload,
+                "parsed_data": data,
+                "raw_result": result
+            }
+
             return schema(**data)
         except json.JSONDecodeError as e:
             # Try to find JSON object if mixed with text (fallback)
