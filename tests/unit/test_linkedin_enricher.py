@@ -104,4 +104,4 @@ async def test_enrich_extraction_fail(agent):
     enriched_lead, metadata = await agent.enrich_from_linkedin_profile(lead)
     
     assert enriched_lead == lead
-    assert metadata["extracted_data"] is None
+    assert metadata["extracted_data"] == {}

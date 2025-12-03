@@ -35,17 +35,17 @@ Extract the following fields and return them as JSON:
 - **name**: Full name of the person. Extract exactly as written. If only first or last name is available, use what you have.
 - **role**: Job title, position, or professional role. 
 
-  **For LinkedIn profiles**, look for these SPECIFIC PATTERNS (in order of priority):
-  1. **Profile headline** - Look for patterns like:
-     - "Name | Role at Company"
-     - "Name · Role"  
-     - "Role at Company"
-     - Text immediately after the name, often with separators (|, ·, •, -, @)
-  2. **Current Position section** - Look for:
-     - "Current:", "Currently:", section headers
-     - Most recent entry with current dates or "Present"
-  3. **Experience section** - Extract the topmost/current role
-  4. **About section** - May mention current position
+- **role**: Job title, position, or professional role. 
+
+  **For LinkedIn profiles**, the content is organized into sections:
+  - **HEADER**: Look here for the "Headline" (e.g., "Role at Company")
+  - **EXPERIENCE**: Look here for the most recent role. This is usually the first entry.
+  - **ABOUT**: May mention current position.
+
+  **Priority Order**:
+  1. **EXPERIENCE section** - The first/topmost role is usually current.
+  2. **HEADER section** - The headline often contains the current role.
+  3. **ABOUT section** - Context clues.
   
   **Common LinkedIn role patterns to recognize:**
   - Chief Technology Officer | CTO

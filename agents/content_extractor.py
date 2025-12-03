@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
@@ -9,6 +10,8 @@ import yaml
 
 from models.lead import LeadProfile
 from tools.llama_wrapper import LlamaWrapper
+from tools.linkedin_contact_url_builder import LinkedInContactURLBuilder
+from tools.contact_data_extractor import ContactDataExtractor
 
 logger = structlog.get_logger()
 
@@ -89,7 +92,26 @@ class ContentExtractorAgent:
         markdown_lower = markdown.lower()
         url_lower = url.lower()
 
-        # Check for job board indicators first (highest priority for exclusion)
+        # Check for LinkedIn profile indicators FIRST (highest priority for detection)
+        if "linkedin.com/in/" in url_lower:
+            logger.info("Content type detected: profile", indicator="linkedin.com/in")
+            return "profile"
+
+        # Check for LinkedIn profile patterns in content (structured content)
+        linkedin_indicators = [
+            "experience:",
+            "education:",
+            "connections",
+            "followers",
+            "recommendations",
+        ]
+
+        for indicator in linkedin_indicators:
+            if indicator in markdown_lower:
+                logger.info("Content type detected: profile", indicator=indicator)
+                return "profile"
+
+        # Check for job board indicators (only if not already identified as LinkedIn profile)
         job_indicators = [
             "apply now",
             "submit resume",
@@ -108,11 +130,6 @@ class ContentExtractorAgent:
             if indicator in markdown_lower:
                 logger.info("Content type detected: job_board", indicator=indicator)
                 return "job_board"
-
-        # Check for LinkedIn profile indicators (most specific)
-        if "linkedin.com/in/" in url_lower:
-            logger.info("Content type detected: profile", indicator="linkedin.com/in")
-            return "profile"
 
         # Check for LinkedIn profile patterns (structured content)
         linkedin_indicators = [
@@ -191,6 +208,184 @@ class ContentExtractorAgent:
         # Wrapper will be closed by its own context manager
         pass
 
+    def _clean_markdown(self, markdown: str) -> str:
+        """
+        Clean markdown content by removing JSON blocks and metadata noise.
+        For LinkedIn profiles, this now relies on _extract_linkedin_sections
+        which is called from _select_extraction_strategy.
+        
+        This method serves as a general cleaner for non-profile content
+        or as a fallback.
+        
+        Args:
+            markdown: Raw markdown content
+            
+        Returns:
+            Cleaned markdown content
+        """
+        if not markdown:
+            return ""
+            
+        lines = markdown.split('\n')
+        cleaned_lines = []
+        
+        # Patterns to identify JSON/metadata lines
+        json_starts = ('{', '}', '[', ']', '`   {', '`   [', '` {', '` [')
+        metadata_keys = (
+            'request":', 'data":', 'included":', 'meta":', '$type":', 'urn:'
+        )
+        
+        # Keywords that indicate noise
+        noise_keywords = [
+            "lixTracking", "chameleon", "voyager.dash.segments", "trackingItem"
+        ]
+        
+        in_code_block = False
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Handle code blocks
+            if stripped.startswith('```'):
+                in_code_block = not in_code_block
+                continue
+                
+            # Skip empty lines
+            if not stripped:
+                continue
+                
+            # Check for noise
+            if any(noise in stripped for noise in noise_keywords):
+                continue
+            
+            # Skip image links that are likely tracking pixels or icons
+            # But keep profile pictures (often have 'profile-displayphoto')
+            if stripped.startswith('![') and 'licdn.com' in stripped:
+                if 'shrink_' in stripped and 'profile-displayphoto' not in stripped:
+                    continue
+            
+            # Decision logic for JSON/Metadata lines
+            is_json_line = stripped.startswith(json_starts) or any(key in stripped for key in metadata_keys)
+            
+            if is_json_line:
+                # In general cleaning, we drop JSON lines to reduce noise
+                continue
+                
+            # If we are in a code block, we treat it similarly to JSON lines
+            if in_code_block:
+                continue
+                
+            # Regular text lines are kept
+            cleaned_lines.append(line)
+            
+        return '\n'.join(cleaned_lines)
+
+    def _extract_linkedin_sections(self, markdown: str) -> str:
+        """
+        Extract key sections from LinkedIn profile markdown.
+        Produces a structured output with HEADER, ABOUT, and EXPERIENCE sections.
+        
+        Args:
+            markdown: Raw markdown content (or fit_markdown)
+            
+        Returns:
+            Structured text with labeled sections
+        """
+        if not markdown:
+            return ""
+            
+        lines = markdown.split('\n')
+        
+        # Buffers for sections
+        header_lines = []
+        about_lines = []
+        experience_lines = []
+        education_lines = []
+        
+        # State tracking
+        current_section = "header" # Start in header
+        
+        # Markers for section transitions
+        # These are common headings in LinkedIn markdown
+        section_markers = {
+            "about": ["About", "Summary", "Overview", "Background", "Biography"],
+            "experience": ["Experience", "Work Experience", "Career History", "Employment History"],
+            "education": ["Education", "Academic Background"],
+            "skills": ["Skills", "Endorsements", "Skills & Endorsements"],
+            "recommendations": ["Recommendations"],
+            "interests": ["Interests"],
+            "languages": ["Languages"],
+            "licenses": ["Licenses & certifications", "Certifications"],
+            "projects": ["Projects"],
+            "volunteering": ["Volunteering"]
+        }
+        
+        # Helper to check if a line is a section header
+        def detect_section(line):
+            line_lower = line.lower().strip().replace('#', '').strip()
+            for section, markers in section_markers.items():
+                if line_lower in [m.lower() for m in markers]:
+                    return section
+            return None
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+                
+            # Check for section transition
+            # Heuristic: Section headers are often short and match known markers
+            if len(stripped) < 50:
+                new_section = detect_section(stripped)
+                if new_section:
+                    current_section = new_section
+                    continue # Skip the header line itself in the output? Or keep it? Let's skip to keep it clean.
+            
+            # Filter noise (JSON, tracking)
+            if stripped.startswith(('{', '}', '[', ']')) or 'request":' in stripped or 'lixTracking' in stripped:
+                continue
+                
+            # Add line to appropriate section buffer
+            if current_section == "header":
+                # Limit header to first 100 lines to avoid capturing too much nav junk
+                if len(header_lines) < 100:
+                    header_lines.append(stripped)
+            elif current_section == "about":
+                about_lines.append(stripped)
+            elif current_section == "experience":
+                experience_lines.append(stripped)
+            elif current_section == "education":
+                education_lines.append(stripped)
+            # We ignore other sections (skills, etc) to keep it compact
+            
+        # Construct final output
+        output_parts = []
+        
+        if header_lines:
+            output_parts.append("HEADER:")
+            output_parts.extend(header_lines)
+            output_parts.append("") # Spacer
+            
+        if about_lines:
+            output_parts.append("ABOUT:")
+            output_parts.extend(about_lines)
+            output_parts.append("")
+            
+        if experience_lines:
+            output_parts.append("EXPERIENCE:")
+            output_parts.extend(experience_lines)
+            output_parts.append("")
+            
+        if education_lines:
+            output_parts.append("EDUCATION:")
+            output_parts.extend(education_lines)
+            output_parts.append("")
+            
+        cleaned = '\n'.join(output_parts)
+        logger.info(f"LinkedIn section extraction: {len(markdown)} -> {len(cleaned)} chars")
+        return cleaned
+
+
     async def extract_entities(
         self, markdown: str, schema: Type[LeadProfile], url: str = ""
     ) -> Optional[LeadProfile]:
@@ -210,6 +405,22 @@ class ContentExtractorAgent:
         # Step 1: Detect content type
         content_type = self.detect_content_type(markdown, url)
         log.info("Content type detection completed", content_type=content_type)
+
+        # DEBUG: Save raw markdown for inspection (only if enabled)
+        if self.settings.get("debug_markdown", False):
+            try:
+                timestamp = int(time.time())
+                safe_url = url.replace("/", "_").replace(":", "").replace(".", "_")[-50:] if url else "no_url"
+                filename = f"debug_data/markdown_{timestamp}_{content_type}_{safe_url}.md"
+                
+                # Ensure directory exists
+                Path("debug_data").mkdir(exist_ok=True)
+                
+                with open(filename, "w") as f:
+                    f.write(markdown)
+                log.info("Saved raw markdown for debugging", filename=filename)
+            except Exception as e:
+                log.warning("Failed to save debug markdown", error=str(e))
 
         # Step 2: Skip job boards entirely
         if content_type == "job_board":
@@ -242,13 +453,16 @@ class ContentExtractorAgent:
                         raise ValueError("Team page extraction returned empty array")
 
                 # Validate minimum required fields
-                if not lead.name or not lead.company:
+                if not lead.name:
                     log.warning(
                         "Structured extraction missing required fields",
                         name=lead.name,
                         company=lead.company,
                     )
-                    raise ValueError("Missing required fields: name and company")
+                    raise ValueError("Missing required field: name")
+
+                if not lead.company:
+                     log.info("Lead extracted without company name", name=lead.name)
 
                 # Calculate confidence score based on content type
                 confidence = self._calculate_confidence_based_on_type(
@@ -256,12 +470,25 @@ class ContentExtractorAgent:
                 )
                 lead.confidence_score = confidence
 
+                # Extract emails from main profile content (Layer 2 support)
+                profile_emails = ContactDataExtractor.extract_emails_from_text(markdown)
+                if profile_emails:
+                    if not lead.metadata:
+                        lead.metadata = {}
+                    lead.metadata["profile_emails"] = profile_emails
+                    log.info("Extracted emails from profile content", count=len(profile_emails))
+
                 log.info(
                     "Structured extraction successful",
                     content_type=content_type,
                     confidence=confidence,
                     fields_populated=self._count_populated_fields(lead),
                 )
+
+                # Step: Try to scrape LinkedIn contact info if this is a LinkedIn profile
+                if url and LinkedInContactURLBuilder.is_linkedin_profile_url(url):
+                    log.info("Attempting to scrape LinkedIn contact info", url=url)
+                    await self._scrape_linkedin_contact_info(lead, url)
 
                 return lead
 
@@ -282,9 +509,39 @@ class ContentExtractorAgent:
                         company=minimal_lead.company,
                         confidence=minimal_lead.confidence_score,
                     )
+                    
+                    # Extract emails from main profile content (Layer 2 support)
+                    profile_emails = ContactDataExtractor.extract_emails_from_text(truncated_markdown)
+                    if profile_emails:
+                        if not minimal_lead.metadata:
+                            minimal_lead.metadata = {}
+                        minimal_lead.metadata["profile_emails"] = profile_emails
+                        log.info("Extracted emails from minimal profile content", count=len(profile_emails))
+                    
+                    # Try contact scraping for minimal lead too
+                    if url and LinkedInContactURLBuilder.is_linkedin_profile_url(url):
+                        await self._scrape_linkedin_contact_info(minimal_lead, url)
+                        
                     return minimal_lead
 
-                # Layer 3: Complete failure
+                # Layer 3: Try regex-based role extraction if role is missing
+                if minimal_lead and not minimal_lead.role:
+                    log.info("Attempting regex-based role extraction fallback")
+                    role_with_regex = self._extract_role_with_regex(truncated_markdown)
+                    if role_with_regex:
+                        minimal_lead.role = role_with_regex["role"]
+                        minimal_lead.confidence_score = min(
+                            minimal_lead.confidence_score + 0.1, 0.7
+                        )  # Boost confidence but cap at 0.7 for regex
+                        log.info(
+                            "Regex role extraction successful",
+                            role=role_with_regex["role"],
+                            confidence=minimal_lead.confidence_score,
+                            pattern=role_with_regex["pattern"],
+                        )
+                        return minimal_lead
+
+                # Layer 4: Complete failure
                 log.error("All extraction methods failed", content_type=content_type)
                 return None
 
@@ -295,6 +552,91 @@ class ContentExtractorAgent:
                 error_type=type(e).__name__,
             )
             return None
+
+
+    async def _scrape_linkedin_contact_info(self, lead: LeadProfile, profile_url: str) -> None:
+        """
+        Scrape LinkedIn contact info overlay and merge into lead profile.
+        
+        Args:
+            lead: The lead profile to update
+            profile_url: The LinkedIn profile URL
+        """
+        try:
+            # Build contact info URL
+            contact_url = LinkedInContactURLBuilder.build_contact_info_url(profile_url)
+            if not contact_url:
+                return
+
+            logger.info("Scraping contact info overlay", contact_url=contact_url)
+
+            # We need a Crawl4AI client for this. 
+            # Since ContentExtractor doesn't own the crawler, we might need to instantiate one
+            # or rely on the caller to pass it. However, the current architecture 
+            # seems to have agents managing their own tools.
+            # We'll instantiate a temporary client here, but ideally this should be shared.
+            # For now, we'll use the one from tools.crawl4ai_client
+            from tools.crawl4ai_client import Crawl4AIClient
+            
+            # Check if auth is enabled in settings
+            linkedin_config = self.settings.get("linkedin", {})
+            auth_enabled = linkedin_config.get("auth_enabled", False)
+            
+            if not auth_enabled:
+                logger.debug("LinkedIn auth not enabled, skipping contact scraping")
+                return
+
+            async with Crawl4AIClient(linkedin_auth=True, settings=self.settings) as crawler:
+                try:
+                    async with asyncio.timeout(30):
+                        results = await crawler.batch_fetch([contact_url])
+                except TimeoutError:
+                    logger.warning("Contact info scraping timed out")
+                    return
+                
+                if not results or results[0].get("fetch_status") != "success":
+                    logger.warning("Failed to fetch contact info overlay")
+                    return
+                    
+                content = results[0].get("markdown", "") + " " + results[0].get("html", "")
+                
+                # Extract data
+                emails = ContactDataExtractor.extract_emails_from_text(content)
+                phones = ContactDataExtractor.extract_phones_from_text(content)
+                websites = ContactDataExtractor.extract_websites_from_text(content)
+                
+                # Update lead profile
+                updated = False
+                
+                if emails and not lead.email:
+                    lead.email = emails[0]
+                    updated = True
+                    # Store all found emails in metadata
+                    # Create a copy or new dict to ensure update persists
+                    meta = lead.metadata.copy() if lead.metadata else {}
+                    meta["all_emails"] = emails
+                    meta["email_source"] = "linkedin_contact_overlay"
+                    lead.metadata = meta
+                    
+                if phones and not lead.phone_number:
+                    lead.phone_number = phones[0]
+                    updated = True
+                    
+                # If we found websites, we might want to update company domain if missing
+                # But be careful not to overwrite with personal sites
+                
+                if updated:
+                    # Boost confidence
+                    lead.confidence_score = min(lead.confidence_score + 0.15, 1.0)
+                    logger.info(
+                        "Updated lead with contact info", 
+                        email=lead.email, 
+                        phone=lead.phone_number,
+                        emails_found=len(emails)
+                    )
+                    
+        except Exception as e:
+            logger.warning("Error scraping contact info", error=str(e))
 
     def _select_extraction_strategy(
         self, markdown: str, content_type: str
@@ -314,60 +656,69 @@ class ContentExtractorAgent:
             content_type, self.prompts.get("generic", "")
         )
 
-        original_length = len(markdown)
-
-        # Apply intelligent truncation based on content type
+        # Apply specific cleaning/extraction based on content type
         if content_type == "profile":
-            # Truncate large profiles (>15KB) to keep critical first sections
-            # LinkedIn profiles: first 10KB contains name, headline, current role, contact
-            max_length = 10000
-            if original_length > 15000:
-                truncated_markdown = markdown[:max_length]
+            # Use structured section extraction for LinkedIn profiles
+            # This produces compact, labeled text (HEADER, ABOUT, EXPERIENCE)
+            cleaned_markdown = self._extract_linkedin_sections(markdown)
+            
+            # Truncation strategy for profiles
+            # Since we are now extracting specific sections, the content should be much smaller.
+            # We can be generous with the limit, but still protect against huge outputs.
+            max_length = 20000 
+            if len(cleaned_markdown) > max_length:
+                truncated_markdown = cleaned_markdown[:max_length]
                 logger.info(
                     "Truncated large profile content",
-                    original_length=original_length,
+                    original_length=len(cleaned_markdown),
                     truncated_length=len(truncated_markdown),
                     content_type=content_type,
                 )
             else:
-                truncated_markdown = markdown
+                truncated_markdown = cleaned_markdown
+                
+        else:
+            # For other types, use general cleaning
+            cleaned_markdown = self._clean_markdown(markdown)
+            original_length = len(cleaned_markdown)
 
-        elif content_type == "team_page":
-            # Team pages usually concise, keep full content up to 15KB
-            max_length = 15000
-            if original_length > max_length:
-                truncated_markdown = markdown[:max_length]
-                logger.info(
-                    "Truncated large team page",
-                    original_length=original_length,
-                    truncated_length=len(truncated_markdown),
-                )
-            else:
-                truncated_markdown = markdown
+            if content_type == "team_page":
+                # Team pages usually concise, keep full content up to 15KB
+                max_length = 15000
+                if original_length > max_length:
+                    truncated_markdown = cleaned_markdown[:max_length]
+                    logger.info(
+                        "Truncated large team page",
+                        original_length=original_length,
+                        truncated_length=len(truncated_markdown),
+                    )
+                else:
+                    truncated_markdown = cleaned_markdown
 
-        elif content_type == "article":
-            # Articles: intro usually has author info, truncate to first 8KB
-            max_length = 8000
-            truncated_markdown = markdown[:max_length]
-            if original_length > max_length:
-                logger.info(
-                    "Truncated article content",
-                    original_length=original_length,
-                    truncated_length=len(truncated_markdown),
-                )
+            elif content_type == "article":
+                # Articles: intro usually has author info, truncate to first 8KB
+                max_length = 8000
+                truncated_markdown = cleaned_markdown[:max_length]
+                if original_length > max_length:
+                    logger.info(
+                        "Truncated article content",
+                        original_length=original_length,
+                        truncated_length=len(truncated_markdown),
+                    )
 
-        else:  # unknown
-            # Unknown content: be conservative, keep first 5KB
-            max_length = 5000
-            truncated_markdown = markdown[:max_length]
-            if original_length > max_length:
-                logger.info(
-                    "Truncated unknown content",
-                    original_length=original_length,
-                    truncated_length=len(truncated_markdown),
-                )
+            else:  # unknown
+                # Unknown content: be conservative, keep first 5KB
+                max_length = 5000
+                truncated_markdown = cleaned_markdown[:max_length]
+                if original_length > max_length:
+                    logger.info(
+                        "Truncated unknown content",
+                        original_length=original_length,
+                        truncated_length=len(truncated_markdown),
+                    )
 
         return prompt_template, truncated_markdown
+
 
     def _calculate_confidence_based_on_type(
         self, lead: LeadProfile, markdown: str, content_type: str
@@ -496,10 +847,12 @@ Return ONLY the JSON, no other text."""
         async def extract_with_semaphore(page: Dict[str, Any]) -> Optional[LeadProfile]:
             async with semaphore:
                 try:
-                    markdown = page.get("markdown", "")
+                    # Prefer fit_markdown if available and not empty, otherwise use raw markdown
+                    markdown = page.get("fit_markdown") or page.get("markdown", "")
+                    
                     if not markdown:
+                        logger.warning("Empty markdown content", url=page.get("url"))
                         return None
-
                     # Pass URL for content type detection
                     url = page.get("url", "")
                     lead = await self.extract_entities(markdown, LeadProfile, url)
@@ -662,3 +1015,158 @@ Return ONLY the JSON, no other text."""
             error=str(error),
             markdown_length=len(page.get("markdown", "")),
         )
+
+    def _extract_role_with_regex(self, text: str) -> Optional[Dict[str, str]]:
+        """
+        Extract role using regex patterns as fallback when LLM extraction fails.
+
+        Args:
+            text: Text content to search for roles
+
+        Returns:
+            Dictionary with role and pattern info, or None if no match found
+        """
+        text_lower = text.lower()
+
+        # Comprehensive role patterns based on research from Context7
+        role_patterns = [
+            # C-level executives
+            (
+                r"\b(ceo|chief executive officer)\b.*?(?:at|@|of|for)\s+([^,\n.]{2,50})",
+                "C-Level",
+            ),
+            (
+                r"\b(cto|chief technology officer)\b.*?(?:at|@|of|for)\s+([^,\n.]{2,50})",
+                "C-Level",
+            ),
+            (
+                r"\b(cfo|chief financial officer)\b.*?(?:at|@|of|for)\s+([^,\n.]{2,50})",
+                "C-Level",
+            ),
+            (
+                r"\b(cmo|chief marketing officer)\b.*?(?:at|@|of|for)\s+([^,\n.]{2,50})",
+                "C-Level",
+            ),
+            (
+                r"\b(coo|chief operating officer)\b.*?(?:at|@|of|for)\s+([^,\n.]{2,50})",
+                "C-Level",
+            ),
+            (
+                r"\b(cso|chief security officer)\b.*?(?:at|@|of|for)\s+([^,\n.]{2,50})",
+                "C-Level",
+            ),
+            (
+                r"\b(cpo|chief product officer)\b.*?(?:at|@|of|for)\s+([^,\n.]{2,50})",
+                "C-Level",
+            ),
+            # VP/Vice President roles
+            (r"\b(vp|vice president)\s+([^,\n.]{2,30})\b", "VP"),
+            (r"\bvice\s+president\s+of\s+([^,\n.]{2,30})\b", "VP"),
+            (r"\bvice\s+president\s+([^,\n.]{2,30})\b", "VP"),
+            # Director roles
+            (r"\bdirector\s+of\s+([^,\n.]{2,30})\b", "Director"),
+            (r"\bdirector\s+([^,\n.]{2,30})\b", "Director"),
+            (r"\b(?:managing|executive)\s+director\b", "Director"),
+            # Head of roles
+            (r"\bhead\s+of\s+([^,\n.]{2,30})\b", "Head"),
+            (r"\bhead\s+([^,\n.]{2,30})\b", "Head"),
+            # Founder roles
+            (r"\b(founder|co-?founder)\b", "Founder"),
+            (r"\b(?:co\s*founder|co-founder)\b", "Founder"),
+            # Manager roles
+            (r"\b(?:general|senior)\s+manager\b", "Manager"),
+            (r"\bmanager\s+of\s+([^,\n.]{2,30})\b", "Manager"),
+            # Lead roles
+            (r"\b(?:team|technical|product)\s+lead\b", "Lead"),
+            (r"\blead\s+([^,\n.]{2,30})\b", "Lead"),
+            # Senior roles
+            (r"\bsenior\s+([^,\n.]{2,30})\b", "Senior"),
+            (r"\bprincipal\s+([^,\n.]{2,30})\b", "Principal"),
+            # Common tech roles
+            (r"\b(?:software|senior|lead)\s+(?:engineer|developer)\b", "Engineer"),
+            (r"\b(?:product|project)\s+manager\b", "Manager"),
+            (r"\b(?:data|science)\s+(?:scientist|analyst)\b", "Data"),
+        ]
+
+        # Try each pattern
+        for pattern, category in role_patterns:
+            try:
+                matches = re.findall(pattern, text_lower, re.IGNORECASE)
+                if matches:
+                    # For patterns with groups, extract the role
+                    if isinstance(matches[0], tuple):
+                        role_text = matches[0][0] if matches[0][0] else matches[0][1]
+                    else:
+                        role_text = matches[0]
+
+                    # Clean up the role text
+                    role_text = role_text.strip().title()
+
+                    # Validate the role is reasonable
+                    if len(role_text) >= 2 and len(role_text) <= 50:
+                        logger.debug(
+                            "Role extracted with regex",
+                            role=role_text,
+                            pattern=pattern,
+                            category=category,
+                        )
+                        return {
+                            "role": role_text,
+                            "pattern": pattern,
+                            "category": category,
+                            "confidence": 0.5 if category == "C-Level" else 0.4,
+                        }
+            except Exception as e:
+                logger.debug("Regex pattern failed", pattern=pattern, error=str(e))
+                continue
+
+        # Try simple role title patterns without company context
+        simple_role_patterns = [
+            r"\b(ceo|chief executive officer)\b",
+            r"\b(cto|chief technology officer)\b",
+            r"\b(cfo|chief financial officer)\b",
+            r"\b(cmo|chief marketing officer)\b",
+            r"\b(coo|chief operating officer)\b",
+            r"\b(vp|vice president)\b",
+            r"\bdirector\b",
+            r"\bhead\s+of\b",
+            r"\b(founder|co-?founder)\b",
+            r"\bmanager\b",
+            r"\blead\b",
+        ]
+
+        for pattern in simple_role_patterns:
+            try:
+                if re.search(pattern, text_lower, re.IGNORECASE):
+                    # Extract the matched role
+                    match = re.search(pattern, text_lower, re.IGNORECASE)
+                    role_text = match.group(0).strip().title()
+
+                    # Clean up common variations
+                    role_text = re.sub(r"\b(Vp)\b", "VP", role_text)
+                    role_text = re.sub(
+                        r"\b(Cto|Cfo|Cmo|Coo)\b",
+                        lambda m: m.group(0).upper(),
+                        role_text,
+                    )
+
+                    logger.debug(
+                        "Simple role extracted with regex",
+                        role=role_text,
+                        pattern=pattern,
+                    )
+                    return {
+                        "role": role_text,
+                        "pattern": pattern,
+                        "category": "Simple",
+                        "confidence": 0.3,
+                    }
+            except Exception as e:
+                logger.debug(
+                    "Simple regex pattern failed", pattern=pattern, error=str(e)
+                )
+                continue
+        logger.debug("No role found with regex patterns")
+        return None
+
+

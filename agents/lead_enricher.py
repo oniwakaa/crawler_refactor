@@ -188,13 +188,14 @@ JSON Response:"""
             domain = None
             metadata = {}
             
-            # Try search with timeout
+            # Try search with extended timeout (180s as implemented in CompanyDomainAgent)
             try:
-                async with asyncio.timeout(20):
+                # The timeout is handled inside CompanyDomainAgent, but we add a safety timeout
+                async with asyncio.timeout(40):  # Slightly longer than internal timeout
                     domain, metadata = await self.domain_agent.find_company_domain(lead.company)
             except TimeoutError:
-                log.warning("Domain search timed out, attempting fallback")
-                metadata = {"reason": "timeout"}
+                log.warning("Domain search timed out after 40 seconds")
+                metadata = {"reason": "timeout", "timeout_duration": "40s"}
             except Exception as e:
                 log.warning("Domain search failed", error=str(e))
                 metadata = {"reason": "error", "error": str(e)}
@@ -221,6 +222,7 @@ JSON Response:"""
             return lead
             
         if not lead.company_domain:
+            log.warning("Skipping email discovery: No company domain", company=lead.company)
             return lead
             
         log = logger.bind(lead_name=lead.name, domain=lead.company_domain)
@@ -231,7 +233,13 @@ JSON Response:"""
                 log.warning("Email agent not initialized")
                 return lead
                 
-            email, metadata = await self.email_agent.discover_email(lead)
+            try:
+                async with asyncio.timeout(60):
+                    email, metadata = await self.email_agent.discover_email(lead)
+            except TimeoutError:
+                log.warning("Email discovery timed out after 60 seconds")
+                metadata = {"reason": "timeout"}
+                email = None
             
             if email:
                 updated_lead = lead.model_copy()

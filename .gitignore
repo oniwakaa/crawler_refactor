@@ -54,3 +54,16 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Debug & Test Output
+debug_data/
+test_output/
+test_outputs/
+
+# Browser Data
+browser_data/
+tests/browser_data/
+
+# Results
+results/
+benchmarks/results/

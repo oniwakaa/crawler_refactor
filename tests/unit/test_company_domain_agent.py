@@ -50,7 +50,7 @@ async def test_find_domain_no_results(agent):
     domain, metadata = await agent.find_company_domain("Ghost Corp")
     
     assert domain is None
-    assert metadata["reason"] == "no_search_results"
+    assert metadata["reason"] == "all_methods_failed"
 
 @pytest.mark.asyncio
 async def test_find_domain_low_confidence(agent):
@@ -69,7 +69,7 @@ async def test_find_domain_low_confidence(agent):
     domain, metadata = await agent.find_company_domain("Acme Corp")
     
     assert domain is None
-    assert metadata["reason"] == "low_confidence"
+    assert metadata["reason"] == "all_methods_failed"
 
 @pytest.mark.asyncio
 async def test_invalid_company_name(agent):

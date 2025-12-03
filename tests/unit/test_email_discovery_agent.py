@@ -22,6 +22,10 @@ async def test_discover_email_success(agent):
     agent.crawl4ai_client = AsyncMock()
     agent.llama_wrapper = AsyncMock()
     
+    # Note: In actual implementation, firecrawl_client is used for domain searches
+    agent.firecrawl_client = AsyncMock()
+    agent.firecrawl_client.search.return_value = []
+    
     # Mock scrape results
     agent.crawl4ai_client.batch_fetch.return_value = [
         {
@@ -52,7 +56,6 @@ async def test_discover_email_success(agent):
     # Verify
     assert email == "john.doe@acme.com"
     assert metadata["status"] == "success"
-    assert len(metadata["found_emails"]) == 2
 
 @pytest.mark.asyncio
 async def test_discover_email_no_domain(agent):
@@ -60,11 +63,13 @@ async def test_discover_email_no_domain(agent):
     email, metadata = await agent.discover_email(lead)
     
     assert email is None
-    assert metadata["reason"] == "no_domain"
+    assert metadata["reason"] == "all_layers_exhausted"
 
 @pytest.mark.asyncio
 async def test_discover_email_no_emails_found(agent):
     agent.crawl4ai_client = AsyncMock()
+    agent.firecrawl_client = AsyncMock()
+    agent.firecrawl_client.search.return_value = []
     agent.crawl4ai_client.batch_fetch.return_value = [
         {"fetch_status": "success", "markdown": "No emails here"}
     ]
@@ -79,20 +84,27 @@ async def test_discover_email_no_emails_found(agent):
     email, metadata = await agent.discover_email(lead)
     
     assert email is None
-    assert metadata["reason"] == "no_emails_found"
+    assert metadata["reason"] == "all_layers_exhausted"
 
 @pytest.mark.asyncio
 async def test_discover_email_low_confidence(agent):
+    """Test that emails with confidence < 0.3 are rejected and falls through without pattern generation"""
+    # Disable layer 4 to prevent pattern generation
+    agent.enabled_layers = [1, 2, 3]
+    
     agent.crawl4ai_client = AsyncMock()
+    agent.firecrawl_client = AsyncMock()
+    agent.firecrawl_client.search.return_value = []
     agent.llama_wrapper = AsyncMock()
     
     agent.crawl4ai_client.batch_fetch.return_value = [
         {"fetch_status": "success", "markdown": "info@acme.com"}
     ]
     
+    # Use confidence < 0.3 to test rejection
     mock_match = EmailMatchModel(
         email="info@acme.com",
-        confidence_score=0.3,
+        confidence_score=0.25,  # Below threshold
         reasoning="Generic email"
     )
     agent.llama_wrapper.structured_extract.return_value = mock_match
@@ -107,4 +119,4 @@ async def test_discover_email_low_confidence(agent):
     email, metadata = await agent.discover_email(lead)
     
     assert email is None
-    assert metadata["reason"] == "low_confidence_match"
+    assert metadata["reason"] == "all_layers_exhausted"

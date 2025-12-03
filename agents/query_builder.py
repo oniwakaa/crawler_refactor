@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Dict, Optional, List
 from tools.llama_wrapper import LlamaWrapper
+from tools.linkedin_search_builder import LinkedInPeopleSearchBuilder
 
 
 class QueryBuilderAgent:
@@ -200,6 +201,25 @@ Respond with valid JSON only.
         query_params = self.build_search_query(user_query)
         query_params = self.validate_query_parameters(query_params)
         
+        # Check if this is a LinkedIn-specific query
+        if self._is_linkedin_query(user_query):
+            try:
+                direct_url = self._build_linkedin_people_url(user_query)
+                self.logger.info(f"Generated direct LinkedIn URL: {direct_url}")
+                
+                return {
+                    "search_type": "linkedin_people",
+                    "direct_url": direct_url,
+                    "query": user_query,
+                    "reasoning": "Using LinkedIn People search URL for targeted profile results",
+                    # Include standard params for fallback compatibility
+                    "limit": 10,
+                    "sources": ["web"],
+                    "timeout": 60000
+                }
+            except Exception as e:
+                self.logger.warning(f"Failed to build LinkedIn URL: {e}, falling back to standard search")
+        
         # Extract location from user query for geo-targeting
         country, location = self._extract_location_from_query(user_query)
         
@@ -209,7 +229,7 @@ Respond with valid JSON only.
             "limit": 10,  # Default limit
             "sources": ["web"],  # Focus on web results
             "country": country or "US",  # Default to US if no country detected
-            "location": location,
+            "location": location or "",  # Use empty string if no location specified
             "exclude_terms": query_params.get("exclude_terms", []),
             "include_terms": query_params.get("include_terms", []),
             "reasoning": query_params.get("reasoning", ""),
@@ -219,6 +239,32 @@ Respond with valid JSON only.
         
         self.logger.info(f"Built Firecrawl parameters: {firecrawl_params}")
         return firecrawl_params
+
+    def _is_linkedin_query(self, user_query: str) -> bool:
+        """Detect if the query is specifically targeting LinkedIn profiles."""
+        query_lower = user_query.lower()
+        keywords = ["linkedin", "profile", "profiles"]
+        return any(keyword in query_lower for keyword in keywords)
+
+    def _build_linkedin_people_url(self, user_query: str) -> str:
+        """Build a direct LinkedIn People search URL from the user query."""
+        # Extract location
+        country_code, location = self._extract_location_from_query(user_query)
+        
+        # Clean query to get role/keywords (remove location and "linkedin")
+        clean_query = user_query.lower()
+        if location:
+            clean_query = clean_query.replace(location.lower(), "")
+        
+        for keyword in ["linkedin", "profile", "profiles", "in"]:
+            clean_query = clean_query.replace(keyword, "")
+            
+        role = clean_query.strip()
+        
+        return LinkedInPeopleSearchBuilder.build_people_search_url(
+            role=role,
+            location=location
+        )
     
     def _extract_location_from_query(self, user_query: str) -> tuple[str, str]:
         """Extract location information from user query."""

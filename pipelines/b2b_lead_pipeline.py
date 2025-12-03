@@ -110,6 +110,23 @@ class B2BLeadPipeline:
         
         self.start_time = time.time()
         logger.info("Pipeline initialized", pipeline_id=self.pipeline_id, query=self.config.query)
+        
+        # Validate LinkedIn authentication if enabled
+        linkedin_config = self.settings.get("linkedin", {})
+        if linkedin_config.get("validate_session_on_startup", False):
+            logger.info("Validating LinkedIn authentication session...")
+            
+            # Check session exists and is valid
+            session_dir = Path(linkedin_config.get("session_data_dir", "browser_data/linkedin_profile"))
+            if not session_dir.exists():
+                logger.warning(
+                    "LinkedIn authentication enabled but session not found. "
+                    "Pipeline will run with limited profile data. "
+                    "To enable full access, run: python scripts/refresh_linkedin_auth.py"
+                )
+            else:
+                logger.info("LinkedIn session found - authenticated scraping enabled")
+                
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):

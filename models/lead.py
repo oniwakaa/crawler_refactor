@@ -10,27 +10,7 @@ class LeadProfile(BaseModel):
     """
     # Required fields - minimum for a valid lead
     name: str = Field(..., description="Full name of the lead", min_length=1)
-    company: str = Field(..., description="Company name", min_length=1)
-    
-    @field_validator('name', mode='before')
-    @classmethod
-    def validate_name_lenient(cls, v) -> str:
-        """Provide fallback for missing name to allow lead creation with low confidence."""
-        if v is None or (isinstance(v, str) and v.strip() == ""):
-            # Return placeholder instead of failing
-            # This allows extraction with extremely low confidence rather than complete failure
-            return "Unknown Person"
-        return v.strip() if isinstance(v, str) else str(v)
-    
-    @field_validator('company', mode='before')
-    @classmethod
-    def validate_company_lenient(cls, v) -> str:
-        """Provide fallback for missing company to allow lead creation with low confidence."""
-        if v is None or (isinstance(v, str) and v.strip() == ""):
-            # Return placeholder instead of failing
-            # This allows extraction with extremely low confidence rather than complete failure
-            return "Unknown Company"
-        return v.strip() if isinstance(v, str) else str(v)
+    company: Optional[str] = Field(None, description="Company name")
     
     # Optional fields - may not always be available
     role: Optional[str] = Field(None, description="Job title or role")
@@ -43,6 +23,7 @@ class LeadProfile(BaseModel):
     confidence_score: float = Field(0.0, ge=0.0, le=1.0, description="Confidence score of the extracted data")
     source_url: Optional[str] = Field(None, description="URL where the lead was found")
     extraction_timestamp: datetime = Field(default_factory=datetime.utcnow, description="Time of extraction")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata about the extraction process")
 
     @field_validator('email', mode='before')
     @classmethod
