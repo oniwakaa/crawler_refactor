@@ -570,13 +570,9 @@ class ContentExtractorAgent:
 
             logger.info("Scraping contact info overlay", contact_url=contact_url)
 
-            # We need a Crawl4AI client for this. 
-            # Since ContentExtractor doesn't own the crawler, we might need to instantiate one
-            # or rely on the caller to pass it. However, the current architecture 
-            # seems to have agents managing their own tools.
-            # We'll instantiate a temporary client here, but ideally this should be shared.
-            # For now, we'll use the one from tools.crawl4ai_client
-            from tools.crawl4ai_client import Crawl4AIClient
+            # Use the existing crawler if available, or create a new one with auth
+            # Ideally we should use a shared crawler to avoid creating new contexts
+            # For now, we'll try to use the one passed in or create a new one
             
             # Check if auth is enabled in settings
             linkedin_config = self.settings.get("linkedin", {})
@@ -586,57 +582,78 @@ class ContentExtractorAgent:
                 logger.debug("LinkedIn auth not enabled, skipping contact scraping")
                 return
 
-            async with Crawl4AIClient(linkedin_auth=True, settings=self.settings) as crawler:
+            # Retry logic
+            max_retries = 2
+            for attempt in range(max_retries):
                 try:
-                    async with asyncio.timeout(30):
-                        results = await crawler.batch_fetch([contact_url])
-                except TimeoutError:
-                    logger.warning("Contact info scraping timed out")
-                    return
-                
-                if not results or results[0].get("fetch_status") != "success":
-                    logger.warning("Failed to fetch contact info overlay")
-                    return
+                    # We use the tool's client but we need to ensure we don't create too many contexts
+                    # If this method is called frequently, we should pass the client in.
+                    # For now, we'll use a context manager but with a short timeout
+                    from tools.crawl4ai_client import Crawl4AIClient
                     
-                content = results[0].get("markdown", "") + " " + results[0].get("html", "")
-                
-                # Extract data
-                emails = ContactDataExtractor.extract_emails_from_text(content)
-                phones = ContactDataExtractor.extract_phones_from_text(content)
-                websites = ContactDataExtractor.extract_websites_from_text(content)
-                
-                # Update lead profile
-                updated = False
-                
-                if emails and not lead.email:
-                    lead.email = emails[0]
-                    updated = True
-                    # Store all found emails in metadata
-                    # Create a copy or new dict to ensure update persists
-                    meta = lead.metadata.copy() if lead.metadata else {}
-                    meta["all_emails"] = emails
-                    meta["email_source"] = "linkedin_contact_overlay"
-                    lead.metadata = meta
-                    
-                if phones and not lead.phone_number:
-                    lead.phone_number = phones[0]
-                    updated = True
-                    
-                # If we found websites, we might want to update company domain if missing
-                # But be careful not to overwrite with personal sites
-                
-                if updated:
-                    # Boost confidence
-                    lead.confidence_score = min(lead.confidence_score + 0.15, 1.0)
-                    logger.info(
-                        "Updated lead with contact info", 
-                        email=lead.email, 
-                        phone=lead.phone_number,
-                        emails_found=len(emails)
-                    )
-                    
+                    async with Crawl4AIClient(linkedin_auth=True, settings=self.settings) as crawler:
+                        try:
+                            async with asyncio.timeout(30):
+                                results = await crawler.batch_fetch([contact_url])
+                        except TimeoutError:
+                            logger.warning(f"Contact info scraping timed out (attempt {attempt+1}/{max_retries})")
+                            continue
+                        
+                        if not results or results[0].get("fetch_status") != "success":
+                            logger.warning(f"Failed to fetch contact info overlay (attempt {attempt+1}/{max_retries})")
+                            continue
+                            
+                        content = results[0].get("markdown", "") + " " + results[0].get("html", "")
+                        
+                        # Extract data
+                        emails = ContactDataExtractor.extract_emails_from_text(content)
+                        phones = ContactDataExtractor.extract_phones_from_text(content)
+                        websites = ContactDataExtractor.extract_websites_from_text(content)
+                        
+                        # Update lead profile
+                        updated = False
+                        
+                        if emails:
+                            # Add to metadata first
+                            meta = lead.metadata.copy() if lead.metadata else {}
+                            existing_emails = meta.get("all_emails", [])
+                            new_emails = [e for e in emails if e not in existing_emails]
+                            
+                            if new_emails:
+                                meta["all_emails"] = existing_emails + new_emails
+                                meta["email_source"] = "linkedin_contact_overlay"
+                                lead.metadata = meta
+                                
+                                # Update primary email if missing
+                                if not lead.email:
+                                    lead.email = emails[0]
+                                    updated = True
+                            
+                        if phones and not lead.phone_number:
+                            lead.phone_number = phones[0]
+                            updated = True
+                            
+                        if updated:
+                            # Boost confidence
+                            lead.confidence_score = min(lead.confidence_score + 0.15, 1.0)
+                            logger.info(
+                                "Updated lead with contact info", 
+                                email=lead.email, 
+                                phone=lead.phone_number,
+                                emails_found=len(emails)
+                            )
+                        
+                        # If we succeeded, break the retry loop
+                        return
+                        
+                except Exception as e:
+                    logger.warning(f"Error scraping contact info (attempt {attempt+1}/{max_retries})", error=str(e))
+                    await asyncio.sleep(2)  # Short delay before retry
+            
+            logger.warning("Contact info scraping failed after retries", url=contact_url)
+
         except Exception as e:
-            logger.warning("Error scraping contact info", error=str(e))
+            logger.warning("Error in contact info scraping wrapper", error=str(e), url=profile_url)
 
     def _select_extraction_strategy(
         self, markdown: str, content_type: str

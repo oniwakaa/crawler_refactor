@@ -31,6 +31,7 @@ validation:
 linkedin:
   # Authentication
   auth_enabled: true
+  authenticated_user_url: "https://www.linkedin.com/in/piero-dalla-francesca-026429303"
   session_data_dir: "browser_data/linkedin_profile"
   headless: true  # Set to false for debugging
   

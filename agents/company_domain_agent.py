@@ -229,7 +229,8 @@ JSON Response:"""
                 prompt=validation_prompt,
                 schema=DomainValidationModel,
                 model=self.model_name,
-                temperature=0.1
+                temperature=0.1,
+                max_tokens=1024  # Ensure sufficient tokens for validation
             )
             return result.confidence_score, result.reasoning
         except Exception as e:
@@ -272,7 +273,7 @@ Domain:"""
                 prompt=inference_prompt,
                 model=self.model_name,
                 temperature=0.2,
-                max_tokens=100
+                max_tokens=1024  # Increased from 256 to prevent truncation
             )
             
             # Clean and validate the response

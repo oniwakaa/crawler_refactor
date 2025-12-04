@@ -308,11 +308,12 @@ JSON Response:"""
                 # Stage 1: LinkedIn Enrichment
                 if lead.linkedin:
                     try:
-                        async with asyncio.timeout(30): # Increased to 30s for LinkedIn
+                        # Enforce strict time budget for LinkedIn enrichment (45s)
+                        async with asyncio.timeout(45):
                             lead = await self.enricher.enrich_from_linkedin(lead)
                             stats["linkedin_enriched"] += 1
                     except TimeoutError:
-                        lead_log.warning("LinkedIn enrichment timed out, proceeding with partial data")
+                        lead_log.warning("LinkedIn enrichment timed out (45s limit), proceeding with partial data")
                     except Exception as e:
                         lead_log.warning("LinkedIn enrichment failed", error=str(e))
                 

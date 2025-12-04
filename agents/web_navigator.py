@@ -344,6 +344,12 @@ class WebNavigatorAgent:
         # Regex for excluded patterns
         exclude_pattern = re.compile(r'linkedin\.com/(?:jobs|company|posts|pulse|learning|feed|groups|events)/')
         
+        # Get authenticated user URL from settings to prevent self-scraping
+        linkedin_config = self.settings.get("linkedin", {})
+        auth_user_url = linkedin_config.get("authenticated_user_url", "")
+        if auth_user_url:
+            auth_user_url = normalize_linkedin_url(auth_user_url).lower()
+        
         for url in urls:
             url_lower = url.lower()
             
@@ -358,6 +364,12 @@ class WebNavigatorAgent:
                 
             # If it matches excluded patterns, skip
             if exclude_pattern.search(url_lower):
+                excluded_count += 1
+                continue
+                
+            # Check if it matches authenticated user
+            if auth_user_url and (auth_user_url in url_lower or url_lower in auth_user_url):
+                logger.info("Skipping authenticated user profile URL", url=url)
                 excluded_count += 1
                 continue
                 

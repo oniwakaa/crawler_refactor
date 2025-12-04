@@ -86,6 +86,7 @@ class LinkedInProfileEnricherAgent:
         
         try:
             # 1. Fetch Profile
+            # Use specific settings for enrichment to match main pipeline stability
             fetch_result = await self.crawl4ai_client.fetch_linkedin_profile(lead.linkedin)
             metadata["stages"].append("fetch")
             
