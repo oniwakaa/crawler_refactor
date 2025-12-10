@@ -107,6 +107,59 @@ class Crawl4AIClient:
         if self.crawler:
             await self.crawler.close()
             self.crawler = None
+
+    async def _restart_browser(self):
+        """
+        Restart the browser instance after a crash.
+        Includes robust cleanup of lock files and retry logic.
+        """
+        logger.warning("♻️ Restarting browser context due to connection failure...")
+        print("DEBUG: Restarting browser context...")
+        
+        # 1. Close existing crawler
+        try:
+            if self.crawler:
+                await self.crawler.close()
+        except Exception as e:
+            logger.warning(f"Error closing crawler during restart: {e}")
+            
+        # 2. Wait for process cleanup
+        await asyncio.sleep(2.0)
+        
+        # 3. Clean up lock file if it exists (defensive)
+        if self.browser_config and self.browser_config.user_data_dir:
+            lock_file = os.path.join(self.browser_config.user_data_dir, "SingletonLock")
+            if os.path.exists(lock_file):
+                try:
+                    logger.warning(f"Found stale SingletonLock, removing: {lock_file}")
+                    os.remove(lock_file)
+                except Exception as e:
+                    logger.error(f"Failed to remove lock file: {e}")
+        
+        # 4. Attempt to start with retries
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                self.crawler = AsyncWebCrawler(config=self.browser_config)
+                await self.crawler.start()
+                logger.info("✅ Browser context restarted successfully")
+                print("DEBUG: Browser context restarted")
+                return
+            except Exception as e:
+                logger.error(f"Browser restart attempt {attempt+1}/{max_retries} failed: {e}")
+                if "SingletonLock" in str(e):
+                    # Try to remove lock again
+                    if self.browser_config and self.browser_config.user_data_dir:
+                        lock_file = os.path.join(self.browser_config.user_data_dir, "SingletonLock")
+                        if os.path.exists(lock_file):
+                            try:
+                                os.remove(lock_file)
+                            except:
+                                pass
+                
+                await asyncio.sleep(3.0 * (attempt + 1))
+        
+        raise RuntimeError("Failed to restart browser after multiple attempts")
             
     async def batch_fetch(self, urls: List[str]) -> List[Dict[str, Any]]:
         """
@@ -325,11 +378,26 @@ class Crawl4AIClient:
                     )
                     
             except Exception as e:
-                last_error = str(e)
+                error_msg = str(e)
+                last_error = error_msg
+                
+                # Check for critical browser failures
+                is_browser_crash = any(err in error_msg for err in [
+                    "Connection closed", 
+                    "Target closed", 
+                    "Reading from the driver",
+                    "Navigating ACS-GOTO"
+                ])
+                
+                if is_browser_crash:
+                    logger.error(f"💥 Browser connection error: {error_msg}")
+                    print(f"DEBUG: Critical browser error detected: {error_msg}")
+                    await self._restart_browser()
+                
                 log.warning(
                     "Fetch attempt failed with exception",
                     attempt=attempt + 1,
-                    error=str(e)
+                    error=error_msg
                 )
             
             # Wait before retry (exponential backoff)

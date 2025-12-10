@@ -55,7 +55,7 @@ logger = structlog.get_logger()
 class PipelineConfig:
     """Pipeline configuration"""
     query: str
-    max_results: int = 50
+    max_results: int = 150  # Default to 150 to allow full use of Firecrawl discovery (3 calls x 50)
     settings_path: str = str(PROJECT_ROOT / "config/settings.yaml")
     output_path: Optional[str] = None
     verbose: bool = False
@@ -145,6 +145,10 @@ class B2BLeadPipeline:
         """
         logger.info("Starting pipeline execution", pipeline_id=self.pipeline_id)
         
+        # Track current state of leads for partial saving
+        current_leads: List[Any] = []
+        final_lead_batch: Optional[LeadBatch] = None
+        
         try:
             # Step 1: Orchestrator decomposes query
             logger.info("Step 1: Query decomposition")
@@ -156,49 +160,76 @@ class B2BLeadPipeline:
             
             if not pages:
                 logger.warning("No pages fetched, returning empty results")
-                return LeadBatch(leads=[], query=self.config.query)
+                final_lead_batch = LeadBatch(leads=[], query=self.config.query)
+                return final_lead_batch
             
             # Step 3: Extractor extracts leads
             logger.info("Step 3: Lead extraction")
             raw_leads = await self._step_extract(pages)
+            current_leads = raw_leads
             
             if not raw_leads:
                 logger.warning("No leads extracted, returning empty results")
-                return LeadBatch(leads=[], query=self.config.query)
+                final_lead_batch = LeadBatch(leads=[], query=self.config.query)
+                return final_lead_batch
             
             # Step 4: Enricher enriches and deduplicates
             logger.info("Step 4: Lead enrichment and deduplication")
             enriched_leads = await self._step_enrich(raw_leads)
+            current_leads = enriched_leads
             
             # Step 5: Validator validates and normalizes
             logger.info("Step 5: Lead validation")
             validated_leads = await self._step_validate(enriched_leads)
+            current_leads = validated_leads
             
             # Step 6: Orchestrator aggregates final results
             logger.info("Step 6: Result aggregation")
-            lead_batch = await self._step_aggregate(validated_leads)
-            
-            # Save final output
-            self._save_artifact("pipeline_complete", {
-                "lead_batch": lead_batch.model_dump(),
-                "statistics": {
-                    "total_leads": len(lead_batch.leads),
-                    "query": self.config.query,
-                    "duration": time.time() - self.start_time if self.start_time else 0
-                }
-            })
+            final_lead_batch = await self._step_aggregate(validated_leads)
             
             logger.info(
                 "Pipeline execution completed successfully",
-                total_leads=len(lead_batch.leads),
+                total_leads=len(final_lead_batch.leads),
                 duration=time.time() - self.start_time if self.start_time else 0
             )
             
-            return lead_batch
+            return final_lead_batch
             
         except Exception as e:
             logger.error("Pipeline execution failed", error=str(e), pipeline_id=self.pipeline_id)
+            # Create a partial batch if we have leads
+            if current_leads:
+                final_lead_batch = LeadBatch(
+                    leads=current_leads if isinstance(current_leads[0], LeadProfile) else [],
+                    query=self.config.query,
+                    metadata={"error": str(e), "partial": True}
+                )
             raise
+            
+        finally:
+            # Always attempt to save the artifact
+            if final_lead_batch:
+                save_stage = "pipeline_complete"
+            elif current_leads:
+                save_stage = "pipeline_failed_partial"
+                final_lead_batch = LeadBatch(
+                    leads=current_leads if len(current_leads) > 0 and isinstance(current_leads[0], LeadProfile) else [],
+                    query=self.config.query,
+                    metadata={"partial": True}
+                )
+            else:
+                save_stage = "pipeline_failed_no_data"
+            
+            if final_lead_batch:
+                self._save_artifact(save_stage, {
+                    "lead_batch": final_lead_batch.model_dump(),
+                    "statistics": {
+                        "total_leads": len(final_lead_batch.leads),
+                        "query": self.config.query,
+                        "duration": time.time() - self.start_time if self.start_time else 0
+                    }
+                })
+
             
     async def _step_orchestrate(self) -> TaskPlan:
         """Step 1: Query decomposition"""
@@ -350,11 +381,18 @@ class B2BLeadPipeline:
         }
         
         try:
+            # Ensure folder exists (defensive)
+            self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+            
+            print(f"\n[Artifact] Saving {stage} to {filepath}...")
             with open(filepath, 'w') as f:
                 json.dump(artifact, f, indent=2, default=str)
                 
+            print(f"[Artifact] Successfully saved {stage} ({os.path.getsize(filepath)} bytes)")
             logger.info("Pipeline artifact saved", stage=stage, filepath=str(filepath))
+            
         except Exception as e:
+            print(f"[Artifact] ERROR: Failed to save {stage}: {e}")
             logger.error("Failed to save pipeline artifact", stage=stage, error=str(e))
 
 # CLI Interface
@@ -363,7 +401,7 @@ app = typer.Typer(help="B2B Lead Generation Pipeline")
 @app.command()
 def run(
     query: str = typer.Argument(..., help="Search query for lead generation"),
-    max_results: int = typer.Option(50, "--max-results", "-m", help="Maximum number of results"),
+    max_results: int = typer.Option(150, "--max-results", "-m", help="Maximum number of results (default 150 to maximize discovery)"),
     settings: str = typer.Option(str(PROJECT_ROOT / "config/settings.yaml"), "--settings", "-s", help="Settings file path"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path (JSON)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),

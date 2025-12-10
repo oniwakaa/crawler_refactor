@@ -7,7 +7,7 @@ import yaml
 import re
 
 from agents.query_builder import QueryBuilderAgent
-from tools.firecrawl_client import FirecrawlClient
+from tools.firecrawl_client import FirecrawlClient, LINKEDIN_SEARCH_LIMIT
 from tools.crawl4ai_client import Crawl4AIClient
 from utils.url_utils import normalize_linkedin_url
 
@@ -53,6 +53,7 @@ class WebNavigatorAgent:
     async def __aenter__(self):
         """Async context manager entry"""
         self.firecrawl_client = FirecrawlClient()
+        await self.firecrawl_client.__aenter__()
         
         # Initialize Crawl4AI client with authentication if enabled
         linkedin_config = self.settings.get("linkedin", {})
@@ -79,8 +80,11 @@ class WebNavigatorAgent:
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        # Clients will be closed by their own context managers
-        pass
+        # Ensure clients are closed properly
+        if self.crawl4ai_client:
+            await self.crawl4ai_client.__aexit__(exc_type, exc_val, exc_tb)
+        if self.firecrawl_client:
+            await self.firecrawl_client.__aexit__(exc_type, exc_val, exc_tb)
         
     async def search_and_fetch(
         self, 
@@ -140,21 +144,50 @@ class WebNavigatorAgent:
         else:
             # Standard Firecrawl search
             try:
-                async with self.firecrawl_client as fc_client:
-                    # Extract search parameters from optimized_params
-                    query = optimized_params["query"]
-                    max_results_param = max_results
+                # Use existing client if available, or fetch as one-off
+                # Since firecrawl_client is lightweight, using the instance directly is fine
+                # But if we want to ensure context management consistency:
+                fc_client = self.firecrawl_client 
+                if not fc_client:
+                    # Should not happen if used as context manager, but fallback
+                    fc_client = FirecrawlClient()
+                
+                # Use the new 3-step LinkedIn discovery workflow
+                # Prepare arguments from optimized_params
+                
+                # Role is the base query
+                role = query
+                
+                # Location
+                location = optimized_params.get("location", "")
+                
+                # Skills (from include_terms)
+                skills = None
+                if optimized_params.get("include_terms"):
+                    skills = " ".join(optimized_params["include_terms"])
                     
-                    # Extract additional parameters (excluding query)
-                    additional_params = {
-                        key: value for key, value in optimized_params.items()
-                        if key not in ["query"]
-                    }
+                # Exclusions (from exclude_terms, formatted with -)
+                exclusions = None
+                if optimized_params.get("exclude_terms"):
+                    exclusions = " ".join(f"-{term}" for term in optimized_params["exclude_terms"])
                     
-                    urls = await fc_client.search(query, max_results_param, **additional_params)
-                    
-                    # Limit URLs to max_results
-                    urls = urls[:max_results]
+                # Use the constant limit to maximize discovery regardless of requested max_results
+                limit_per_step = LINKEDIN_SEARCH_LIMIT
+                
+                log.info("Executing 3-step LinkedIn discovery", 
+                         role=role, location=location, 
+                         limit_per_step=limit_per_step)
+                         
+                urls = await fc_client.discover_linkedin_profiles(
+                    role=role,
+                    location=location,
+                    skills=skills,
+                    exclusions=exclusions,
+                    limit_per_step=limit_per_step
+                )
+                
+                # Limit combined results to max_results if needed
+                urls = urls[:max_results]
                     
             except Exception as e:
                 log.error("Search failed", error=str(e))
@@ -247,14 +280,17 @@ class WebNavigatorAgent:
         log.info("Fetching with Crawl4AI")
         
         try:
-            async with self.crawl4ai_client as crawler:
-                results = await crawler.batch_fetch(urls)
+            # Use established crawler instance
+            if not self.crawl4ai_client:
+                raise RuntimeError("Crawl4AI client not initialized")
+
+            results = await self.crawl4ai_client.batch_fetch(urls)
+            
+            # Add method_used field
+            for result in results:
+                result["method_used"] = "crawl4ai"
                 
-                # Add method_used field
-                for result in results:
-                    result["method_used"] = "crawl4ai"
-                    
-                return results
+            return results
                 
         except Exception as e:
             log.error("Crawl4AI fetch failed", error=str(e))
@@ -286,24 +322,29 @@ class WebNavigatorAgent:
         log.info("Fetching with Firecrawl fallback")
         
         try:
-            async with self.firecrawl_client as fc_client:
-                results = await fc_client.batch_scrape(urls)
+             # Use established firecrawl instance (should be active from __aenter__)
+             fc_client = self.firecrawl_client
+             if not fc_client:
+                 # Should not happen in context, but fallback
+                 fc_client = FirecrawlClient()
+                 
+             results = await fc_client.batch_scrape(urls)
                 
-                # Convert Firecrawl format to standard format
-                converted_results = []
-                for result in results:
-                    converted_result = {
-                        "url": result["url"],
-                        "markdown": result.get("markdown", ""),
-                        "html": result.get("html", ""),
-                        "fetch_status": "success" if result.get("markdown") else "failed",
-                        "method_used": "firecrawl",
-                        "metadata": result.get("metadata", {}),
-                        "timestamp": time.time()
-                    }
-                    converted_results.append(converted_result)
+             # Convert Firecrawl format to standard format
+             converted_results = []
+             for result in results:
+                 converted_result = {
+                     "url": result["url"],
+                     "markdown": result.get("markdown", ""),
+                     "html": result.get("html", ""),
+                     "fetch_status": "success" if result.get("markdown") else "failed",
+                     "method_used": "firecrawl",
+                     "metadata": result.get("metadata", {}),
+                     "timestamp": time.time()
+                 }
+                 converted_results.append(converted_result)
                     
-                return converted_results
+             return converted_results
                 
         except Exception as e:
             log.error("Firecrawl fallback failed", error=str(e))
@@ -321,7 +362,6 @@ class WebNavigatorAgent:
                 for url in urls
             ]
             
-
 
     def _filter_linkedin_profile_urls(self, urls: List[str]) -> List[str]:
         """
@@ -418,50 +458,52 @@ class WebNavigatorAgent:
         try:
             # Use Crawl4AI to fetch the search page
             # We need to use the authenticated client
-            async with self.crawl4ai_client as crawler:
-                # Fetch the search page
-                # We use a single URL fetch here
-                results = await crawler.batch_fetch([search_url])
+            if not self.crawl4ai_client:
+                raise RuntimeError("Crawl4AI client not initialized")
                 
-                if not results or results[0].get("fetch_status") != "success":
-                    log.error("Failed to fetch LinkedIn search page")
-                    return []
-                    
-                content = results[0].get("markdown", "") + results[0].get("html", "")
+            # Fetch the search page
+            # We use a single URL fetch here
+            results = await self.crawl4ai_client.batch_fetch([search_url])
+            
+            if not results or results[0].get("fetch_status") != "success":
+                log.error("Failed to fetch LinkedIn search page")
+                return []
                 
-                # Extract profile URLs from content
-                # Look for href="/in/username" or full URLs
-                # Regex to find LinkedIn profile links
-                # Matches: https://www.linkedin.com/in/username or /in/username
+            content = results[0].get("markdown", "") + results[0].get("html", "")
+            
+            # Extract profile URLs from content
+            # Look for href="/in/username" or full URLs
+            # Regex to find LinkedIn profile links
+            # Matches: https://www.linkedin.com/in/username or /in/username
+            
+            # Find all links that look like profiles
+            # Pattern for full URLs
+            full_url_pattern = re.compile(r'https://(?:www\.)?linkedin\.com/in/[^/"\s?]+')
+            full_matches = full_url_pattern.findall(content)
+            
+            # Pattern for relative URLs (common in HTML)
+            relative_pattern = re.compile(r'href=["\'](/in/[^/"\s?]+)')
+            relative_matches = relative_pattern.findall(content)
+            
+            # Combine and normalize
+            found_urls = set()
+            
+            for match in full_matches:
+                found_urls.add(match)
                 
-                # Find all links that look like profiles
-                # Pattern for full URLs
-                full_url_pattern = re.compile(r'https://(?:www\.)?linkedin\.com/in/[^/"\s?]+')
-                full_matches = full_url_pattern.findall(content)
+            for match in relative_matches:
+                found_urls.add(f"https://www.linkedin.com{match}")
                 
-                # Pattern for relative URLs (common in HTML)
-                relative_pattern = re.compile(r'href=["\'](/in/[^/"\s?]+)')
-                relative_matches = relative_pattern.findall(content)
+            # Clean URLs (remove trailing slashes, etc.)
+            cleaned_urls = []
+            for url in found_urls:
+                # Basic cleaning
+                url = url.rstrip("/")
+                cleaned_urls.append(url)
                 
-                # Combine and normalize
-                found_urls = set()
-                
-                for match in full_matches:
-                    found_urls.add(match)
-                    
-                for match in relative_matches:
-                    found_urls.add(f"https://www.linkedin.com{match}")
-                    
-                # Clean URLs (remove trailing slashes, etc.)
-                cleaned_urls = []
-                for url in found_urls:
-                    # Basic cleaning
-                    url = url.rstrip("/")
-                    cleaned_urls.append(url)
-                    
-                log.info("Extracted URLs from search page", count=len(cleaned_urls))
-                
-                return list(cleaned_urls)[:max_results]
+            log.info("Extracted URLs from search page", count=len(cleaned_urls))
+            
+            return list(cleaned_urls)[:max_results]
                 
         except Exception as e:
             log.error("LinkedIn people search failed", error=str(e))

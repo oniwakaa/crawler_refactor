@@ -77,3 +77,17 @@ Run tests using pytest:
 ```bash
 pytest tests/
 ```
+
+## Configuration & Optimization
+
+### Firecrawl Search
+The pipeline uses an optimized Firecrawl search configuration that requests only URLs (metadata) to minimize bandwidth and latency.
+- **Search Mode**: URLs only (no markdown).
+- **Performance**: ~0.8s response time (vs ~2s default).
+
+### Enrichment Timeouts
+Strict time budgets are enforced to keep pipeline execution efficient:
+- **Domain Search**: 15s timeout.
+- **Email Discovery**: 20s timeout.
+- **LLM Inference**: 15s timeout.
+- **Total Per Lead**: Target < 45s.

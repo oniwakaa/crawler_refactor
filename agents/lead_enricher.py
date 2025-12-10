@@ -122,13 +122,14 @@ JSON Response:"""
         try:
             async with self.llama_wrapper as wrapper:
                 # Use structured extraction to get updated lead
-                enriched_lead = await wrapper.structured_extract(
-                    prompt=inference_prompt,
-                    schema=LeadProfile,
-                    model=self.model_name,
-                    temperature=0.2,
-                    max_tokens=4096
-                )
+                async with asyncio.timeout(15):
+                    enriched_lead = await wrapper.structured_extract(
+                        prompt=inference_prompt,
+                        schema=LeadProfile,
+                        model=self.model_name,
+                        temperature=0.2,
+                        max_tokens=4096
+                    )
                 
                 # Preserve original source URL and timestamp
                 enriched_lead.source_url = lead.source_url
@@ -191,11 +192,11 @@ JSON Response:"""
             # Try search with extended timeout (180s as implemented in CompanyDomainAgent)
             try:
                 # The timeout is handled inside CompanyDomainAgent, but we add a safety timeout
-                async with asyncio.timeout(40):  # Slightly longer than internal timeout
+                async with asyncio.timeout(15):  # Stricter timeout for domain search
                     domain, metadata = await self.domain_agent.find_company_domain(lead.company)
             except TimeoutError:
-                log.warning("Domain search timed out after 40 seconds")
-                metadata = {"reason": "timeout", "timeout_duration": "40s"}
+                log.warning("Domain search timed out after 15 seconds")
+                metadata = {"reason": "timeout", "timeout_duration": "15s"}
             except Exception as e:
                 log.warning("Domain search failed", error=str(e))
                 metadata = {"reason": "error", "error": str(e)}
@@ -234,10 +235,10 @@ JSON Response:"""
                 return lead
                 
             try:
-                async with asyncio.timeout(60):
+                async with asyncio.timeout(20):  # Stricter timeout for email discovery
                     email, metadata = await self.email_agent.discover_email(lead)
             except TimeoutError:
-                log.warning("Email discovery timed out after 60 seconds")
+                log.warning("Email discovery timed out after 20 seconds")
                 metadata = {"reason": "timeout"}
                 email = None
             
