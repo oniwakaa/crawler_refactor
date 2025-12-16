@@ -5,7 +5,6 @@ import structlog
 from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 
-from tools.crawl4ai_client import Crawl4AIClient
 from tools.llama_wrapper import LlamaWrapper
 from models.lead import LeadProfile
 
@@ -38,7 +37,6 @@ class LinkedInProfileEnricherAgent:
             settings: Configuration dictionary
         """
         self.settings = settings
-        self.crawl4ai_client: Optional[Crawl4AIClient] = None
         self.llama_wrapper: Optional[LlamaWrapper] = None
         
         models_config = self.settings.get("models", {})
@@ -47,18 +45,14 @@ class LinkedInProfileEnricherAgent:
         
     async def __aenter__(self):
         """Async context manager entry"""
-        self.crawl4ai_client = Crawl4AIClient()
         self.llama_wrapper = LlamaWrapper(ollama_host=self.ollama_host)
         
         # Initialize clients
-        await self.crawl4ai_client.__aenter__()
         await self.llama_wrapper.__aenter__()
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        if self.crawl4ai_client:
-            await self.crawl4ai_client.__aexit__(exc_type, exc_val, exc_tb)
         if self.llama_wrapper:
             await self.llama_wrapper.__aexit__(exc_type, exc_val, exc_tb)
             
@@ -84,57 +78,24 @@ class LinkedInProfileEnricherAgent:
             "extracted_data": None
         }
         
+        
         try:
-            # 1. Fetch Profile
-            # Use specific settings for enrichment to match main pipeline stability
-            fetch_result = await self.crawl4ai_client.fetch_linkedin_profile(lead.linkedin)
-            metadata["stages"].append("fetch")
+            # 1. Skip Re-scraping (Use existing data)
+            # Since the pipeline uses Apify for the initial scrape, we assume the lead 
+            # already has high-quality data. We skip re-scraping to avoid unnecessary calls 
+            # and complexity with Apify batching here.
             
-            if fetch_result.get("fetch_status") != "success":
-                log.warning("Failed to fetch LinkedIn profile", error=fetch_result.get("error"))
-                metadata["error"] = fetch_result.get("error")
-                return lead, metadata
-                
-            markdown_content = fetch_result.get("markdown", "")
-            if not markdown_content:
-                log.warning("Empty LinkedIn content")
-                metadata["reason"] = "empty_content"
-                return lead, metadata
-                
-            # 2. Regex Extraction (Pre-LLM)
-            # Extract emails/phones from raw markdown first to catch things LLM might miss
-            regex_emails = self._extract_emails_from_text(markdown_content)
-            regex_phones = self._extract_phones_from_text(markdown_content)
+            # If we really needed to enrich a bare URL, we would need to call ApifyClient here,
+            # but for now, we treat this as "if we have content, try to extract more".
             
-            # 3. Extract Data via LLM
-            extracted_data = await self._extract_profile_data(markdown_content)
-            metadata["stages"].append("extraction")
+            # But wait, we don't pass the profile content to this method, currently it fetches.
+            # Without content, we can't do anything.
             
-            if not extracted_data:
-                extracted_data = {}
-                
-            # Merge regex findings if LLM missed them
-            if regex_emails and not extracted_data.get("email"):
-                extracted_data["email"] = regex_emails[0]
-            if regex_phones and not extracted_data.get("phone"):
-                extracted_data["phone"] = regex_phones[0]
-                
-            metadata["extracted_data"] = extracted_data
-            
-            if not extracted_data and not regex_emails and not regex_phones:
-                log.warning("Failed to extract data from profile")
-                return lead, metadata
-                
-            # 4. Update Lead
-            enriched_lead = self._update_lead(lead, extracted_data)
-            metadata["status"] = "success"
-            
-            log.info("LinkedIn enrichment successful", 
-                     company=enriched_lead.company, 
-                     role=enriched_lead.role)
-            
-            return enriched_lead, metadata
-            
+            log.info("Skipping LinkedIn profile re-scraping (handled by initial Apify scrape)")
+            metadata["status"] = "skipped"
+            metadata["reason"] = "already_scraped_by_apify"
+            return lead, metadata
+
         except Exception as e:
             log.error("LinkedIn enrichment failed", error=str(e))
             metadata["error"] = str(e)

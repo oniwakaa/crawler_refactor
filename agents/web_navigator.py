@@ -8,7 +8,7 @@ import re
 
 from agents.query_builder import QueryBuilderAgent
 from tools.firecrawl_client import FirecrawlClient, LINKEDIN_SEARCH_LIMIT
-from tools.crawl4ai_client import Crawl4AIClient
+from tools.apify_client import ApifyScraperClient
 from utils.url_utils import normalize_linkedin_url
 
 logger = structlog.get_logger()
@@ -19,7 +19,8 @@ PROJECT_ROOT = Path(__file__).parent.parent
 class WebNavigatorAgent:
     """
     Web Navigator agent responsible for searching and fetching web content.
-    Uses Firecrawl for search and both Crawl4AI (primary) and Firecrawl (fallback) for content fetching.
+    Uses Firecrawl for discovery/search and Apify for high-quality LinkedIn profile scraping.
+    Firecrawl is also preserved as a general fallback for non-LinkedIn content or if needed.
     """
     
     def __init__(self, settings_path: str = str(PROJECT_ROOT / "config/settings.yaml")):
@@ -31,12 +32,11 @@ class WebNavigatorAgent:
         """
         self.settings = self._load_settings(settings_path)
         self.firecrawl_client: Optional[FirecrawlClient] = None
-        self.crawl4ai_client: Optional[Crawl4AIClient] = None
+        self.apify_client: Optional[ApifyScraperClient] = None
         
         # Load configuration
         crawling_config = self.settings.get("crawling", {})
         self.max_concurrent = crawling_config.get("max_concurrent", 10)
-        self.fallback_to_firecrawl = crawling_config.get("fallback_to_firecrawl", True)
         
         # Initialize QueryBuilderAgent for query optimization
         self.query_builder = QueryBuilderAgent()
@@ -55,34 +55,13 @@ class WebNavigatorAgent:
         self.firecrawl_client = FirecrawlClient()
         await self.firecrawl_client.__aenter__()
         
-        # Initialize Crawl4AI client with authentication if enabled
-        linkedin_config = self.settings.get("linkedin", {})
-        linkedin_auth_enabled = linkedin_config.get("auth_enabled", False)
-        
-        self.crawl4ai_client = Crawl4AIClient(
-            linkedin_auth=linkedin_auth_enabled,
-            settings=self.settings
-        )
-        await self.crawl4ai_client.__aenter__()
-        
-        # Validate session if auth enabled
-        if linkedin_auth_enabled:
-            session_valid = await self.crawl4ai_client.validate_linkedin_session()
-            if session_valid:
-                logger.info("LinkedIn authentication active - using authenticated session")
-            else:
-                logger.error(
-                    "LinkedIn session invalid or expired. "
-                    "Please refresh session: python scripts/refresh_linkedin_auth.py"
-                )
+        # Initialize Apify client
+        self.apify_client = ApifyScraperClient(settings=self.settings)
         
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        # Ensure clients are closed properly
-        if self.crawl4ai_client:
-            await self.crawl4ai_client.__aexit__(exc_type, exc_val, exc_tb)
         if self.firecrawl_client:
             await self.firecrawl_client.__aexit__(exc_type, exc_val, exc_tb)
         
@@ -92,7 +71,7 @@ class WebNavigatorAgent:
         max_results: int = 50
     ) -> List[Dict[str, Any]]:
         """
-        Search for URLs and fetch their content with fallback logic.
+        Search for URLs via Firecrawl and fetch content via Apify (for LinkedIn) or Firecrawl (fallback).
         
         Args:
             query: Search query
@@ -117,8 +96,6 @@ class WebNavigatorAgent:
                 original_query=query,
                 optimized_query=optimized_params["query"],
                 reasoning=optimized_params.get("reasoning", ""),
-                exclude_terms=optimized_params.get("exclude_terms", []),
-                include_terms=optimized_params.get("include_terms", [])
             )
             
         except Exception as e:
@@ -133,65 +110,46 @@ class WebNavigatorAgent:
             }
             log.warning("Using fallback query parameters")
             
-        # Step 2: Search for URLs
-        # Check for direct LinkedIn search
-        if optimized_params.get("search_type") == "linkedin_people":
-            log.info("Executing direct LinkedIn People search")
-            urls = await self._fetch_linkedin_people_search(
-                optimized_params["direct_url"], 
-                max_results
+        # Step 2: Search for URLs (using Firecrawl Discovery)
+        urls = []
+        try:
+            # Use existing client if available, or fetch as one-off
+            fc_client = self.firecrawl_client 
+            if not fc_client:
+                fc_client = FirecrawlClient()
+            
+            # Prepare arguments from optimized_params
+            role = query
+            location = optimized_params.get("location", "")
+            
+            skills = None
+            if optimized_params.get("include_terms"):
+                skills = " ".join(optimized_params["include_terms"])
+                
+            exclusions = None
+            if optimized_params.get("exclude_terms"):
+                exclusions = " ".join(f"-{term}" for term in optimized_params["exclude_terms"])
+                
+            limit_per_step = LINKEDIN_SEARCH_LIMIT
+            
+            log.info("Executing 3-step LinkedIn discovery", 
+                     role=role, location=location, 
+                     limit_per_step=limit_per_step)
+                     
+            urls = await fc_client.discover_linkedin_profiles(
+                role=role,
+                location=location,
+                skills=skills,
+                exclusions=exclusions,
+                limit_per_step=limit_per_step
             )
-        else:
-            # Standard Firecrawl search
-            try:
-                # Use existing client if available, or fetch as one-off
-                # Since firecrawl_client is lightweight, using the instance directly is fine
-                # But if we want to ensure context management consistency:
-                fc_client = self.firecrawl_client 
-                if not fc_client:
-                    # Should not happen if used as context manager, but fallback
-                    fc_client = FirecrawlClient()
-                
-                # Use the new 3-step LinkedIn discovery workflow
-                # Prepare arguments from optimized_params
-                
-                # Role is the base query
-                role = query
-                
-                # Location
-                location = optimized_params.get("location", "")
-                
-                # Skills (from include_terms)
-                skills = None
-                if optimized_params.get("include_terms"):
-                    skills = " ".join(optimized_params["include_terms"])
-                    
-                # Exclusions (from exclude_terms, formatted with -)
-                exclusions = None
-                if optimized_params.get("exclude_terms"):
-                    exclusions = " ".join(f"-{term}" for term in optimized_params["exclude_terms"])
-                    
-                # Use the constant limit to maximize discovery regardless of requested max_results
-                limit_per_step = LINKEDIN_SEARCH_LIMIT
-                
-                log.info("Executing 3-step LinkedIn discovery", 
-                         role=role, location=location, 
-                         limit_per_step=limit_per_step)
-                         
-                urls = await fc_client.discover_linkedin_profiles(
-                    role=role,
-                    location=location,
-                    skills=skills,
-                    exclusions=exclusions,
-                    limit_per_step=limit_per_step
-                )
-                
-                # Limit combined results to max_results if needed
-                urls = urls[:max_results]
-                    
-            except Exception as e:
-                log.error("Search failed", error=str(e))
-                urls = []
+            
+            # Limit combined results to max_results if needed
+            urls = urls[:max_results]
+            
+        except Exception as e:
+            log.error("Search failed", error=str(e))
+            urls = []
             
         if not urls:
             log.warning("Search returned no URLs")
@@ -202,37 +160,70 @@ class WebNavigatorAgent:
         # Filter URLs to keep only valid profiles if they are LinkedIn URLs
         urls = self._filter_linkedin_profile_urls(urls)
         
-        # Step 3: Fetch content with primary method (Crawl4AI)
-        crawl4ai_results = await self._fetch_with_crawl4ai(urls)
+        # Step 3: Fetch content
+        # Split URLs into LinkedIn vs others
+        linkedin_urls = [u for u in urls if "linkedin.com/in/" in u.lower()]
+        other_urls = [u for u in urls if u not in linkedin_urls]
         
-        # Step 4: For failed fetches, use fallback if enabled
-        final_results = crawl4ai_results
+        final_results = []
         
-        if self.fallback_to_firecrawl:
-            failed_urls = [
-                result["url"] for result in crawl4ai_results 
-                if result.get("fetch_status") == "failed"
-            ]
-            
-            if failed_urls:
-                log.info("Using Firecrawl fallback for failed URLs", failed_count=len(failed_urls))
-                fallback_results = await self._fetch_with_firecrawl_fallback(failed_urls)
+        # 3a. Fetch LinkedIn URLs with Apify
+        if linkedin_urls:
+            log.info("Fetching LinkedIn profiles with Apify", count=len(linkedin_urls))
+            try:
+                apify_results = self.apify_client.scrape_profiles(linkedin_urls)
                 
-                # Replace failed results with fallback results
-                final_results = []
-                for result in crawl4ai_results:
-                    if result["url"] in failed_urls:
-                        # Find corresponding fallback result
-                        fallback_result = next(
-                            (fr for fr in fallback_results if fr["url"] == result["url"]),
-                            None
-                        )
-                        if fallback_result:
-                            final_results.append(fallback_result)
-                        else:
-                            final_results.append(result)  # Keep original failed result
-                    else:
-                        final_results.append(result)
+                # Transform to standard result format
+                for res in apify_results:
+                    final_results.append({
+                        "url": res["url"],
+                        "markdown": res["formatted_text"], # Map formatted text to markdown field for content_extractor
+                        "fetch_status": "success" if res["success"] else "failed",
+                        "error": res.get("error"),
+                        "method_used": "apify",
+                        "timestamp": res.get("timestamp"),
+                        "metadata": {"raw_data": res.get("raw_data")}
+                    })
+                    
+            except Exception as e:
+                log.error("Apify batch scraping failed", error=str(e))
+                # Mark all as failed
+                for url in linkedin_urls:
+                     final_results.append({
+                        "url": url,
+                        "markdown": "",
+                        "fetch_status": "failed",
+                        "error": str(e),
+                        "method_used": "apify",
+                        "timestamp": time.time()
+                    })
+
+        # 3b. Fetch other URLs with Firecrawl (fallback/generic)
+        if other_urls:
+            log.info("Fetching non-LinkedIn URLs with Firecrawl", count=len(other_urls))
+            try:
+                fc_client = self.firecrawl_client or FirecrawlClient()
+                other_results = await fc_client.batch_scrape(other_urls)
+                
+                for res in other_results:
+                     final_results.append({
+                        "url": res["url"],
+                        "markdown": res.get("markdown", ""),
+                        "fetch_status": "success" if res.get("markdown") else "failed",
+                        "method_used": "firecrawl",
+                        "timestamp": time.time()
+                    })
+            except Exception as e:
+                log.error("Firecrawl fetch failed", error=str(e))
+                for url in other_urls:
+                    final_results.append({
+                        "url": url,
+                         "markdown": "",
+                        "fetch_status": "failed",
+                        "error": str(e),
+                        "method_used": "firecrawl",
+                        "timestamp": time.time()
+                    })
         
         # Calculate statistics
         total_duration = time.time() - start_time
@@ -265,130 +256,16 @@ class WebNavigatorAgent:
         )
         
         return final_results
-                
-    async def _fetch_with_crawl4ai(self, urls: List[str]) -> List[Dict[str, Any]]:
-        """
-        Fetch URLs using Crawl4AI as primary method.
-        
-        Args:
-            urls: List of URLs to fetch
-            
-        Returns:
-            List of fetch results with method_used="crawl4ai"
-        """
-        log = logger.bind(url_count=len(urls))
-        log.info("Fetching with Crawl4AI")
-        
-        try:
-            # Use established crawler instance
-            if not self.crawl4ai_client:
-                raise RuntimeError("Crawl4AI client not initialized")
-
-            results = await self.crawl4ai_client.batch_fetch(urls)
-            
-            # Add method_used field
-            for result in results:
-                result["method_used"] = "crawl4ai"
-                
-            return results
-                
-        except Exception as e:
-            log.error("Crawl4AI fetch failed", error=str(e))
-            # Return failed results for all URLs
-            return [
-                {
-                    "url": url,
-                    "markdown": "",
-                    "html": "",
-                    "fetch_status": "failed",
-                    "method_used": "crawl4ai",
-                    "error": str(e),
-                    "timestamp": time.time()
-                }
-                for url in urls
-            ]
-            
-    async def _fetch_with_firecrawl_fallback(self, urls: List[str]) -> List[Dict[str, Any]]:
-        """
-        Fetch URLs using Firecrawl as fallback method.
-        
-        Args:
-            urls: List of URLs to fetch
-            
-        Returns:
-            List of fetch results with method_used="firecrawl"
-        """
-        log = logger.bind(url_count=len(urls))
-        log.info("Fetching with Firecrawl fallback")
-        
-        try:
-             # Use established firecrawl instance (should be active from __aenter__)
-             fc_client = self.firecrawl_client
-             if not fc_client:
-                 # Should not happen in context, but fallback
-                 fc_client = FirecrawlClient()
-                 
-             results = await fc_client.batch_scrape(urls)
-                
-             # Convert Firecrawl format to standard format
-             converted_results = []
-             for result in results:
-                 converted_result = {
-                     "url": result["url"],
-                     "markdown": result.get("markdown", ""),
-                     "html": result.get("html", ""),
-                     "fetch_status": "success" if result.get("markdown") else "failed",
-                     "method_used": "firecrawl",
-                     "metadata": result.get("metadata", {}),
-                     "timestamp": time.time()
-                 }
-                 converted_results.append(converted_result)
-                    
-             return converted_results
-                
-        except Exception as e:
-            log.error("Firecrawl fallback failed", error=str(e))
-            # Return failed results for all URLs
-            return [
-                {
-                    "url": url,
-                    "markdown": "",
-                    "html": "",
-                    "fetch_status": "failed",
-                    "method_used": "firecrawl",
-                    "error": str(e),
-                    "timestamp": time.time()
-                }
-                for url in urls
-            ]
-            
 
     def _filter_linkedin_profile_urls(self, urls: List[str]) -> List[str]:
         """
         Filter out non-profile LinkedIn URLs (posts, jobs, company pages, etc.)
-        
-        Args:
-            urls: List of URLs to filter
-            
-        Returns:
-            List of filtered URLs containing only valid profiles or non-LinkedIn URLs
         """
         filtered_urls = []
         excluded_count = 0
         
-        # Regex for valid LinkedIn profile URL
-        # Matches: linkedin.com/in/username
-        # Excludes: /posts/, /jobs/, /company/, /pulse/, /learning/
-        profile_pattern = re.compile(r'linkedin\.com/in/[^/]+/?(?:$|\?|#)')
-        
         # Regex for excluded patterns
         exclude_pattern = re.compile(r'linkedin\.com/(?:jobs|company|posts|pulse|learning|feed|groups|events)/')
-        
-        # Get authenticated user URL from settings to prevent self-scraping
-        linkedin_config = self.settings.get("linkedin", {})
-        auth_user_url = linkedin_config.get("authenticated_user_url", "")
-        if auth_user_url:
-            auth_user_url = normalize_linkedin_url(auth_user_url).lower()
         
         for url in urls:
             url_lower = url.lower()
@@ -398,7 +275,7 @@ class WebNavigatorAgent:
                 filtered_urls.append(url)
                 continue
                 
-            # Normalize LinkedIn URL (handle regional subdomains)
+            # Normalize
             url = normalize_linkedin_url(url)
             url_lower = url.lower()
                 
@@ -407,20 +284,8 @@ class WebNavigatorAgent:
                 excluded_count += 1
                 continue
                 
-            # Check if it matches authenticated user
-            if auth_user_url and (auth_user_url in url_lower or url_lower in auth_user_url):
-                logger.info("Skipping authenticated user profile URL", url=url)
-                excluded_count += 1
-                continue
-                
-            # If it contains /in/ but has extra path segments like /details/ or /posts/
-            # We want to keep the base profile but might need to clean it
-            # For now, just check if it looks like a profile
+            # Must contain /in/ to be a profile
             if "/in/" in url_lower:
-                # Check if it's a sub-page of a profile (e.g. /in/user/details/experience/)
-                # We might want to keep these if we can strip them, or skip them
-                # The requirement says "exclude /posts/, /jobs/"
-                
                 # Check specific sub-pages to exclude
                 if any(sub in url_lower for sub in ["/posts/", "/recent-activity/", "/detail/", "/details/"]):
                     excluded_count += 1
@@ -428,83 +293,9 @@ class WebNavigatorAgent:
                     
                 filtered_urls.append(url)
             else:
-                # LinkedIn URL but not /in/ (e.g. /pub/, /sales/) - skip for now to be safe
                 excluded_count += 1
                 
         if excluded_count > 0:
-            logger.info(
-                "Filtered LinkedIn URLs", 
-                total=len(urls), 
-                kept=len(filtered_urls), 
-                excluded=excluded_count
-            )
+            logger.info("Filtered LinkedIn URLs", total=len(urls), kept=len(filtered_urls), excluded=excluded_count)
             
         return filtered_urls
-
-    async def _fetch_linkedin_people_search(self, search_url: str, max_results: int) -> List[str]:
-        """
-        Execute a direct LinkedIn People search and extract profile URLs.
-        
-        Args:
-            search_url: The LinkedIn search URL
-            max_results: Maximum number of profiles to extract
-            
-        Returns:
-            List of profile URLs found
-        """
-        log = logger.bind(search_url=search_url)
-        log.info("Fetching LinkedIn search results page")
-        
-        try:
-            # Use Crawl4AI to fetch the search page
-            # We need to use the authenticated client
-            if not self.crawl4ai_client:
-                raise RuntimeError("Crawl4AI client not initialized")
-                
-            # Fetch the search page
-            # We use a single URL fetch here
-            results = await self.crawl4ai_client.batch_fetch([search_url])
-            
-            if not results or results[0].get("fetch_status") != "success":
-                log.error("Failed to fetch LinkedIn search page")
-                return []
-                
-            content = results[0].get("markdown", "") + results[0].get("html", "")
-            
-            # Extract profile URLs from content
-            # Look for href="/in/username" or full URLs
-            # Regex to find LinkedIn profile links
-            # Matches: https://www.linkedin.com/in/username or /in/username
-            
-            # Find all links that look like profiles
-            # Pattern for full URLs
-            full_url_pattern = re.compile(r'https://(?:www\.)?linkedin\.com/in/[^/"\s?]+')
-            full_matches = full_url_pattern.findall(content)
-            
-            # Pattern for relative URLs (common in HTML)
-            relative_pattern = re.compile(r'href=["\'](/in/[^/"\s?]+)')
-            relative_matches = relative_pattern.findall(content)
-            
-            # Combine and normalize
-            found_urls = set()
-            
-            for match in full_matches:
-                found_urls.add(match)
-                
-            for match in relative_matches:
-                found_urls.add(f"https://www.linkedin.com{match}")
-                
-            # Clean URLs (remove trailing slashes, etc.)
-            cleaned_urls = []
-            for url in found_urls:
-                # Basic cleaning
-                url = url.rstrip("/")
-                cleaned_urls.append(url)
-                
-            log.info("Extracted URLs from search page", count=len(cleaned_urls))
-            
-            return list(cleaned_urls)[:max_results]
-                
-        except Exception as e:
-            log.error("LinkedIn people search failed", error=str(e))
-            return []

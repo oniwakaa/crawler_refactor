@@ -74,7 +74,7 @@ def mock_page_results():
             "markdown": "# Team\\n\\nJohn Smith - CTO at Example Corp\\nemail: john@example.com",
             "html": "<html>...</html>",
             "fetch_status": "success",
-            "method_used": "crawl4ai",
+            "method_used": "apify",
             "timestamp": 1234567890.0
         },
         {
@@ -82,7 +82,7 @@ def mock_page_results():
             "markdown": "# Leadership\\n\\nMaria Garcia - CEO\\nlinkedin.com/in/maria",
             "html": "<html>...</html>",
             "fetch_status": "success",
-            "method_used": "crawl4ai",
+            "method_used": "apify",
             "timestamp": 1234567891.0
         }
     ]

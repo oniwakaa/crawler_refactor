@@ -34,7 +34,7 @@ class TestMultiLayerEmailDiscovery:
         ))
         
         # Mock dependencies for EmailDiscoveryAgent
-        discovery_agent.crawl4ai_client = AsyncMock()
+        # Mock dependencies for EmailDiscoveryAgent
         discovery_agent.firecrawl_client = AsyncMock()
         discovery_agent.llama_wrapper = MagicMock()
         
@@ -48,15 +48,13 @@ class TestMultiLayerEmailDiscovery:
         url = "https://linkedin.com/in/test"
         
         # 1. Run ContentExtractor
-        # We mock _scrape_linkedin_contact_info to avoid network calls
-        with patch.object(extractor, '_scrape_linkedin_contact_info', new_callable=AsyncMock) as mock_scrape:
-            lead = await extractor.extract_entities(markdown, LeadProfile, url)
-            
-            # Verify ContentExtractor extracted email from markdown
-            assert lead is not None
-            assert lead.metadata is not None
-            assert "profile_emails" in lead.metadata
-            assert "test.user@testcorp.com" in lead.metadata["profile_emails"]
+        lead = await extractor.extract_entities(markdown, LeadProfile, url)
+        
+        # Verify ContentExtractor extracted email from markdown
+        assert lead is not None
+        assert lead.metadata is not None
+        assert "profile_emails" in lead.metadata
+        assert "test.user@testcorp.com" in lead.metadata["profile_emails"]
             
         # 2. Run EmailDiscoveryAgent
         # We mock Layer 1 to fail so it falls through to Layer 2

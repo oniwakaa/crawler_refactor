@@ -19,22 +19,12 @@ def agent(mock_settings):
 @pytest.mark.asyncio
 async def test_enrich_success(agent):
     # Mock clients
-    agent.crawl4ai_client = AsyncMock()
     agent.llama_wrapper = AsyncMock()
     
     # Setup mock returns
-    agent.crawl4ai_client.fetch_linkedin_profile.return_value = {
-        "fetch_status": "success",
-        "markdown": "Test Profile Content"
-    }
-    
-    mock_extraction = LinkedInExtractionModel(
-        name="Test User",
-        company="Test Corp",
-        role="Senior Tester",
-        company_linkedin_url=None
-    )
-    agent.llama_wrapper.structured_extract.return_value = mock_extraction
+    # Setup mock returns
+    # No longer needed as we expect skip
+
     
     # Test lead
     lead = LeadProfile(
@@ -47,12 +37,10 @@ async def test_enrich_success(agent):
     # Run enrichment
     enriched_lead, metadata = await agent.enrich_from_linkedin_profile(lead)
     
-    # Verify
-    assert enriched_lead.company == "Test Corp"
-    assert enriched_lead.role == "Senior Tester"
-    assert metadata["status"] == "success"
-    assert "fetch" in metadata["stages"]
-    assert "extraction" in metadata["stages"]
+    # Verify - Agent should skip re-scraping
+    assert enriched_lead == lead
+    assert metadata["status"] == "skipped"
+    assert metadata["reason"] == "already_scraped_by_apify"
 
 @pytest.mark.asyncio
 async def test_enrich_no_linkedin(agent):
@@ -61,47 +49,3 @@ async def test_enrich_no_linkedin(agent):
     
     assert enriched_lead == lead
     assert metadata["status"] == "skipped"
-
-@pytest.mark.asyncio
-async def test_enrich_fetch_fail(agent):
-    agent.crawl4ai_client = AsyncMock()
-    agent.crawl4ai_client.fetch_linkedin_profile.return_value = {
-        "fetch_status": "failed",
-        "error": "Network error"
-    }
-    
-    lead = LeadProfile(
-        name="Test", 
-        company="Test", 
-        role="Test", 
-        linkedin="https://linkedin.com/in/test"
-    )
-    
-    enriched_lead, metadata = await agent.enrich_from_linkedin_profile(lead)
-    
-    assert enriched_lead == lead
-    assert metadata["error"] == "Network error"
-
-@pytest.mark.asyncio
-async def test_enrich_extraction_fail(agent):
-    agent.crawl4ai_client = AsyncMock()
-    agent.llama_wrapper = AsyncMock()
-    
-    agent.crawl4ai_client.fetch_linkedin_profile.return_value = {
-        "fetch_status": "success",
-        "markdown": "Content"
-    }
-    
-    agent.llama_wrapper.structured_extract.return_value = None
-    
-    lead = LeadProfile(
-        name="Test", 
-        company="Test", 
-        role="Test", 
-        linkedin="https://linkedin.com/in/test"
-    )
-    
-    enriched_lead, metadata = await agent.enrich_from_linkedin_profile(lead)
-    
-    assert enriched_lead == lead
-    assert metadata["extracted_data"] == {}

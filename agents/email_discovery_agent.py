@@ -8,7 +8,6 @@ import structlog
 from pydantic import BaseModel, Field
 
 from models.lead import LeadProfile
-from tools.crawl4ai_client import Crawl4AIClient
 from tools.firecrawl_client import FirecrawlClient
 from tools.linkedin_contact_url_builder import LinkedInContactURLBuilder
 from tools.contact_data_extractor import ContactDataExtractor
@@ -40,7 +39,6 @@ class EmailDiscoveryAgent:
 
     def __init__(self, settings: Dict[str, Any]):
         self.settings = settings
-        self.crawl4ai_client: Optional[Crawl4AIClient] = None
         self.firecrawl_client: Optional[FirecrawlClient] = None
         self.llama_wrapper: Optional[LlamaWrapper] = None
 
@@ -56,17 +54,14 @@ class EmailDiscoveryAgent:
         self.enabled_layers = email_config.get("enabled_layers", [1, 2, 3, 4])
 
     async def __aenter__(self):
-        self.crawl4ai_client = Crawl4AIClient()
         self.firecrawl_client = FirecrawlClient()
         self.llama_wrapper = LlamaWrapper(ollama_host=self.ollama_host)
-        await self.crawl4ai_client.__aenter__()
+        self.llama_wrapper = LlamaWrapper(ollama_host=self.ollama_host)
         await self.firecrawl_client.__aenter__()
         await self.llama_wrapper.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.crawl4ai_client:
-            await self.crawl4ai_client.__aexit__(exc_type, exc_val, exc_tb)
         if self.firecrawl_client:
             await self.firecrawl_client.__aexit__(exc_type, exc_val, exc_tb)
         if self.llama_wrapper:
@@ -209,36 +204,8 @@ class EmailDiscoveryAgent:
             
             log.info("Scraping LinkedIn contact info page", contact_url=contact_url)
             
-            # Check if linkedin auth is enabled in settings
-            linkedin_config = self.settings.get("linkedin", {})
-            linkedin_auth_enabled = linkedin_config.get("auth_enabled", False)
-            
-            if not linkedin_auth_enabled:
-                log.warning("LinkedIn auth not enabled, skipping Layer 1")
-                return {"status": "skipped", "email": None, "reason": "auth_not_enabled"}
-            
-            # Use Crawl4AI to fetch contact page
-            async with Crawl4AIClient(linkedin_auth=True) as crawler:
-                results = await crawler.batch_fetch([contact_url])
-                
-                if not results or results[0].get("fetch_status") != "success":
-                    log.warning("Failed to fetch LinkedIn contact page")
-                    return {"status": "failed", "email": None, "reason": "fetch_failed"}
-                
-                content = results[0].get("markdown", "")
-                if not content:
-                    log.warning("No content received from contact page")
-                    return {"status": "failed", "email": None, "reason": "empty_content"}
-                
-                # Extract emails
-                emails = ContactDataExtractor.extract_emails_from_text(content)
-                
-                if emails:
-                    log.info("Found emails in LinkedIn contact info", count=len(emails), emails=emails)
-                    return {"status": "success", "email": emails[0]}
-                else:
-                    log.info("No emails found in contact info")
-                return {"status": "failed", "email": None, "reason": "no_emails"}
+            log.info("Skipping legacy contact info scraping (auth required)")
+            return {"status": "skipped", "email": None, "reason": "legacy_auth_removed"}
                 
         except Exception as e:
             log.error("LinkedIn contact scraping failed", error=str(e))
@@ -303,15 +270,15 @@ class EmailDiscoveryAgent:
                 log.warning("No contact pages found via search")
                 return {"status": "failed", "email": None, "reason": "no_contact_pages"}
             
-            # Scrape found pages
-            results = await self.crawl4ai_client.batch_fetch(pages_to_scrape)
+            # Scrape found pages using Firecrawl
+            results = await self.firecrawl_client.batch_scrape(pages_to_scrape)
             
             # Extract emails and phones from content
             all_emails = set()
             all_phones = set()
             
             for result in results:
-                if result.get("fetch_status") == "success":
+                if result.get("markdown"):
                     content = result.get("markdown", "")
                     # Extract emails
                     emails = self._extract_emails_from_text(content)

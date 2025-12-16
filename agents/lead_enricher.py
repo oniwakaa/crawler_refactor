@@ -9,7 +9,6 @@ import yaml
 import re
 
 from tools.llama_wrapper import LlamaWrapper
-from tools.crawl4ai_client import Crawl4AIClient
 from models.lead import LeadProfile
 from agents.linkedin_profile_enricher import LinkedInProfileEnricherAgent
 from agents.company_domain_agent import CompanyDomainAgent
@@ -35,7 +34,6 @@ class LeadEnricherAgent:
         """
         self.settings = self._load_settings(settings_path)
         self.llama_wrapper: Optional[LlamaWrapper] = None
-        self.crawl4ai_client: Optional[Crawl4AIClient] = None
         self.linkedin_agent: Optional[LinkedInProfileEnricherAgent] = None
         self.domain_agent: Optional[CompanyDomainAgent] = None
         self.email_agent: Optional[EmailDiscoveryAgent] = None
@@ -58,7 +56,6 @@ class LeadEnricherAgent:
         self.llama_wrapper = LlamaWrapper(
             ollama_host=self.settings.get("models", {}).get("ollama_host", "http://localhost:11434")
         )
-        self.crawl4ai_client = Crawl4AIClient()
         self.linkedin_agent = LinkedInProfileEnricherAgent(self.settings)
         self.domain_agent = CompanyDomainAgent(self.settings)
         self.email_agent = EmailDiscoveryAgent(self.settings)

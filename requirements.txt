@@ -2,8 +2,9 @@
 agno
 
 # Web Scraping & Crawling
-crawl4ai
+apify-client
 firecrawl
+tenacity
 
 # LLM Integration
 llama-cpp-python

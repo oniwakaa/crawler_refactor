@@ -19,7 +19,6 @@ def agent(mock_settings):
 @pytest.mark.asyncio
 async def test_discover_email_success(agent):
     # Mock clients
-    agent.crawl4ai_client = AsyncMock()
     agent.llama_wrapper = AsyncMock()
     
     # Note: In actual implementation, firecrawl_client is used for domain searches
@@ -27,12 +26,14 @@ async def test_discover_email_success(agent):
     agent.firecrawl_client.search.return_value = []
     
     # Mock scrape results
-    agent.crawl4ai_client.batch_fetch.return_value = [
+    # Mock firecrawl batch scrape
+    agent.firecrawl_client.batch_scrape.return_value = [
         {
-            "fetch_status": "success",
+            "metadata": {"sourceURL": "http://acme.com"},
             "markdown": "Contact us at info@acme.com or john.doe@acme.com"
         }
     ]
+
     
     # Mock matching
     mock_match = EmailMatchModel(
@@ -67,11 +68,10 @@ async def test_discover_email_no_domain(agent):
 
 @pytest.mark.asyncio
 async def test_discover_email_no_emails_found(agent):
-    agent.crawl4ai_client = AsyncMock()
     agent.firecrawl_client = AsyncMock()
     agent.firecrawl_client.search.return_value = []
-    agent.crawl4ai_client.batch_fetch.return_value = [
-        {"fetch_status": "success", "markdown": "No emails here"}
+    agent.firecrawl_client.batch_scrape.return_value = [
+        {"metadata": {"sourceURL": "test.com"}, "markdown": "No emails here"}
     ]
     
     lead = LeadProfile(
@@ -92,13 +92,12 @@ async def test_discover_email_low_confidence(agent):
     # Disable layer 4 to prevent pattern generation
     agent.enabled_layers = [1, 2, 3]
     
-    agent.crawl4ai_client = AsyncMock()
     agent.firecrawl_client = AsyncMock()
     agent.firecrawl_client.search.return_value = []
     agent.llama_wrapper = AsyncMock()
     
-    agent.crawl4ai_client.batch_fetch.return_value = [
-        {"fetch_status": "success", "markdown": "info@acme.com"}
+    agent.firecrawl_client.batch_scrape.return_value = [
+        {"metadata": {"sourceURL": "acme.com"}, "markdown": "info@acme.com"}
     ]
     
     # Use confidence < 0.3 to test rejection

@@ -27,40 +27,15 @@ validation:
   phone_validation: true
   url_validation: true
 
-# LinkedIn Authentication Configuration
-linkedin:
-  # Authentication
-  auth_enabled: true
-  authenticated_user_url: "https://www.linkedin.com/in/piero-dalla-francesca-026429303"
-  session_data_dir: "browser_data/linkedin_profile"
-  headless: true  # Set to false for debugging
-  
-  # Rate Limiting
-  rate_limiting:
-    enabled: true
-    delay_between_requests: 4  # seconds
-    randomize_delay: true
-    min_delay: 3
-    max_delay: 6
-    requests_before_long_pause: 25
-    long_pause_duration: 60  # seconds
-  
-  # Page Loading
-  page_load:
-    timeout: 30000  # milliseconds
-    wait_until: "domcontentloaded"  # Changed from networkidle - LinkedIn pages never reach networkidle
-    delay_after_load: 0  # DISABLED - delay_before_return_html causes indefinite hang in Crawl4AI
-  
-  # Session Management
-  session_management:
-    validate_before_scraping: true
-    auto_reauth_on_logout: true
-    retry_on_auth_failure: true
-    max_reauth_attempts: 3
-    session_expiry_warning_days: 25
+# Apify Configuration
+apify:
+  actor_id: "oJMZe85C0opC0xcx2"
+  batch_size: 20
+  timeout_seconds: 120
+  retries: 3
+  # api_token should be set via environment variable APIFY_API_TOKEN
 
 web_navigator:
   use_firecrawl: true
-  use_crawl4ai: true
-  crawl4ai_retries: 3
-  linkedin_auth: true
+  use_apify: true
+

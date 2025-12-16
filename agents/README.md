@@ -27,7 +27,7 @@ This directory contains the autonomous agents that power the lead generation and
     *   **Role**: Responsible for exploring the web to find relevant content.
     *   **Responsibilities**:
         *   Executes search queries using Firecrawl.
-        *   Fetches web page content using Crawl4AI (primary) with Firecrawl fallback.
+        *   Fetches LinkedIn profiles using Apify (primary).
         *   Optimizes search queries to target leads and exclude irrelevant pages (via `QueryBuilderAgent`).
 
 4.  **ContentExtractorAgent** (`content_extractor.py`)
