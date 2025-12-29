@@ -195,10 +195,10 @@ The following secrets are configured:
 
 | Secret Name | Value | Source |
 |-------------|-------|--------|
-| `supabase-url` | `https://ussqphmtireepxgsnydm.supabase.co` | Pre-configured |
-| `supabase-key` | `sb_secret_hZHkx_mYU1hFsBKVf3PeGQ_UGYA3lik` | Pre-configured |
-| `firecrawl-key` | `fc-599b3c525bb3407f9940c708c70ccb1e` | Pre-configured |
-| `ollama-api-key` | **YOUR KEY HERE** | From https://ollama.com/settings/keys |
+| `supabase-url` | (Your Supabase project URL) | Set via CLI/env |
+| `supabase-key` | (Your Supabase service key) | Set via CLI/env |
+| `firecrawl-key` | (Your Firecrawl API key) | Set via CLI/env |
+| `ollama-api-key` | (Your Ollama API key) | From https://ollama.com/settings/keys |
 
 ---
 

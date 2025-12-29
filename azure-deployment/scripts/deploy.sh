@@ -239,9 +239,9 @@ configure_secrets() {
         --name "$APP_NAME" \
         --resource-group "$RESOURCE_GROUP" \
         --secrets \
-            supabase-url="https://ussqphmtireepxgsnydm.supabase.co" \
-            supabase-key="sb_secret_hZHkx_mYU1hFsBKVf3PeGQ_UGYA3lik" \
-            firecrawl-key="fc-599b3c525bb3407f9940c708c70ccb1e" \
+            supabase-url="${SUPABASE_URL:-SET_VIA_ENV}" \
+            supabase-key="${SUPABASE_KEY:-SET_VIA_ENV}" \
+            firecrawl-key="${FIRECRAWL_KEY:-SET_VIA_ENV}" \
             ollama-api-key="$OLLAMA_API_KEY" \
         --only-show-errors
 
