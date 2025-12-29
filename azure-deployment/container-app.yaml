@@ -1,0 +1,150 @@
+# Azure Container Apps - Deployment Template
+# 
+# USAGE: Copy this file and populate secrets via Azure CLI:
+#   az containerapp secret set --name b2b-backend-app \
+#     --resource-group rg-b2b-leadgen-eu \
+#     --secrets supabase-url=<value> supabase-key=<value> firecrawl-key=<value>
+#
+# DO NOT commit files with hardcoded secret values!
+
+location: westeurope
+name: b2b-backend-app
+resourceGroup: rg-b2b-leadgen-eu
+type: Microsoft.App/containerApps
+
+properties:
+  managedEnvironmentId: /subscriptions/${SUBSCRIPTION_ID}/resourceGroups/rg-b2b-leadgen-eu/providers/Microsoft.App/managedEnvironments/aca-env-b2b-eu
+
+  configuration:
+    activeRevisionsMode: Single
+
+    ingress:
+      external: true
+      targetPort: 8000
+      transport: auto
+
+    # Secrets are managed via Azure CLI, not hardcoded here
+    # Set with: az containerapp secret set --name b2b-backend-app ...
+    secrets:
+      - name: supabase-url
+        value: ""  # Set via CLI
+      - name: supabase-key
+        value: ""  # Set via CLI
+      - name: firecrawl-key
+        value: ""  # Set via CLI
+
+    registries:
+      - server: acrb2bleadgeneu01.azurecr.io
+        # Use managed identity for ACR authentication
+        identity: /subscriptions/${SUBSCRIPTION_ID}/resourcegroups/rg-b2b-leadgen-eu/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-b2b-leadgen-eu
+
+  template:
+    volumes:
+      - name: ollama-data
+        storageType: EmptyDir
+
+    containers:
+      # ============================
+      # Main Application Container
+      # ============================
+      - name: main-app
+        image: acrb2bleadgeneu01.azurecr.io/b2b-backend:v3
+
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+
+        env:
+          - name: SUPABASE_URL
+            secretRef: supabase-url
+          - name: SUPABASE_SERVICE_KEY
+            secretRef: supabase-key
+          - name: FIRECRAWL_API_KEY
+            secretRef: firecrawl-key
+          - name: OLLAMA_HOST
+            value: "http://localhost:11434"
+          - name: OLLAMA_BASE_URL
+            value: "http://localhost:11434"
+          - name: OLLAMA_MODEL
+            value: "gpt-oss:120b-cloud"
+          - name: OLLAMA_REQUEST_TIMEOUT
+            value: "600"
+          - name: PORT
+            value: "8000"
+          - name: LOG_LEVEL
+            value: "INFO"
+
+        probes:
+          - type: Startup
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30
+          - type: Liveness
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+          - type: Readiness
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+
+      # ============================
+      # Ollama Sidecar Container
+      # ============================
+      - name: ollama-sidecar
+        image: ollama/ollama:latest
+
+        # IMPORTANT: Use "ollama serve" without --host/--port flags
+        # Configure via OLLAMA_HOST env var instead
+        command: ["ollama"]
+        args: ["serve"]
+
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+
+        env:
+          - name: OLLAMA_HOST
+            value: "0.0.0.0:11434"
+          - name: OLLAMA_MODELS
+            value: "/root/.ollama/models"
+          - name: OLLAMA_KEEP_ALIVE
+            value: "-1"
+          - name: OLLAMA_NUM_PARALLEL
+            value: "4"
+
+        volumeMounts:
+          - volumeName: ollama-data
+            mountPath: /root/.ollama
+
+        probes:
+          - type: Startup
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          - type: Liveness
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          - type: Readiness
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3

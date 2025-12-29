@@ -67,3 +67,14 @@ tests/browser_data/
 # Results
 results/
 benchmarks/results/
+
+# Azure Deployment Secrets (NEVER commit these)
+config/ollama_key
+azure-deployment/container-app-working.yaml
+azure-deployment/container-app-ssh.yaml
+.identity_id_created
+*.secrets.yaml
+
+# Root-level deployment files (use azure-deployment/ instead)
+/container-app.yaml
+/container-app-*.yaml
