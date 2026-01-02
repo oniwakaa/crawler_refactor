@@ -210,26 +210,39 @@ fix_acr_identity() {
 configure_secrets() {
     log_section "Step 3: Configuring Secrets"
 
-    # Check if OLLAMA_API_KEY is set as environment variable
-    if [ -z "$OLLAMA_API_KEY" ]; then
-        log_warning "OLLAMA_API_KEY environment variable is not set"
-        log_info "You can set it before running this script:"
-        log_info "export OLLAMA_API_KEY='your-api-key-here'"
-        log_info ""
-        log_info "Or get your API key from: https://ollama.com/settings/keys"
-
-        # Prompt for API key
-        echo ""
-        read -p "Enter your Ollama API key (or press Enter to skip and configure later): " OLLAMA_API_KEY_INPUT
-
-        if [ -z "$OLLAMA_API_KEY_INPUT" ]; then
-            log_warning "OLLAMA_API_KEY will be set to empty. You must configure it later!"
-            OLLAMA_API_KEY=""
-        else
-            OLLAMA_API_KEY="$OLLAMA_API_KEY_INPUT"
-        fi
+    # Configure Ollama SSH Key
+    OLLAMA_SSH_KEY_CONTENT=""
+    
+    # 1. Check if set via env var
+    if [ ! -z "$OLLAMA_SSH_KEY" ]; then
+        log_success "OLLAMA_SSH_KEY found in environment variable"
+        OLLAMA_SSH_KEY_CONTENT="$OLLAMA_SSH_KEY"
     else
-        log_success "OLLAMA_API_KEY found in environment variable"
+        # 2. Check default location
+        DEFAULT_KEY="$HOME/.ollama/id_ed25519"
+        if [ -f "$DEFAULT_KEY" ]; then
+            log_info "Found Ollama SSH key at default location: $DEFAULT_KEY"
+            read -p "Use this key? [Y/n] " USE_DEFAULT
+            USE_DEFAULT=${USE_DEFAULT:-Y}
+            if [[ "$USE_DEFAULT" =~ ^[Yy]$ ]]; then
+                OLLAMA_SSH_KEY_CONTENT=$(cat "$DEFAULT_KEY")
+            fi
+        fi
+
+        # 3. Prompt if still empty
+        if [ -z "$OLLAMA_SSH_KEY_CONTENT" ]; then
+            echo ""
+            read -p "Enter path to your Ollama SSH private key (e.g. ~/.ollama/id_ed25519): " KEY_PATH
+            # Expand ~ if present
+            KEY_PATH="${KEY_PATH/#\~/$HOME}"
+            
+            if [ -f "$KEY_PATH" ]; then
+                OLLAMA_SSH_KEY_CONTENT=$(cat "$KEY_PATH")
+            else
+                log_warning "Key file not found at $KEY_PATH"
+                log_warning "Ollama Cloud Models may not work without valid auth!"
+            fi
+        fi
     fi
 
     # Set secrets
@@ -242,15 +255,13 @@ configure_secrets() {
             supabase-url="${SUPABASE_URL:-SET_VIA_ENV}" \
             supabase-key="${SUPABASE_KEY:-SET_VIA_ENV}" \
             firecrawl-key="${FIRECRAWL_KEY:-SET_VIA_ENV}" \
-            ollama-api-key="$OLLAMA_API_KEY" \
+            ollama-ssh-key="$OLLAMA_SSH_KEY_CONTENT" \
         --only-show-errors
 
     log_success "Secrets configured"
-
-    if [ -z "$OLLAMA_API_KEY" ]; then
-        log_warning "OLLAMA_API_KEY is empty. You must set it for cloud models to work!"
-        log_info "Set it with:"
-        log_info "az containerapp secret set --name $APP_NAME --resource-group $RESOURCE_GROUP --secrets ollama-api-key='your-key'"
+    
+    if [ -z "$OLLAMA_SSH_KEY_CONTENT" ]; then
+         log_warning "OLLAMA_SSH_KEY is empty. Cloud models will likely fail with 404/Unauthorized."
     fi
 }
 
@@ -260,7 +271,7 @@ configure_secrets() {
 deploy_container_app() {
     log_section "Step 4: Deploying Container App"
 
-    YAML_PATH="$(dirname "$0")/../container-app-cloud.yaml"
+    YAML_PATH="$(dirname "$0")/../container-app.yaml"
 
     if [ ! -f "$YAML_PATH" ]; then
         log_error "YAML file not found: $YAML_PATH"
@@ -269,14 +280,22 @@ deploy_container_app() {
 
     log_info "Using YAML file: $YAML_PATH"
 
-    # Deploy using YAML
+    # Generate temporary YAML with substituted variables
+    GEN_YAML="${YAML_PATH%.yaml}-gen.yaml"
+    log_info "Generating temporary YAML: $GEN_YAML"
+    sed "s/\${SUBSCRIPTION_ID}/$SUBSCRIPTION_ID/g" "$YAML_PATH" > "$GEN_YAML"
+
+    # Deploy using generated YAML
     log_info "Deploying container app..."
 
     az containerapp update \
         --name "$APP_NAME" \
         --resource-group "$RESOURCE_GROUP" \
-        --yaml "$YAML_PATH" \
+        --yaml "$GEN_YAML" \
         --only-show-errors
+        
+    # Cleanup
+    rm "$GEN_YAML"
 
     log_success "Container app deployment initiated"
 }

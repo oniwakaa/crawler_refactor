@@ -29,6 +29,8 @@ wheels/
 .env
 secrets.env
 config/secrets.env
+!.env.example
+!*.example.json
 
 # Logs
 logs/
@@ -36,7 +38,7 @@ logs/
 
 # Artifacts
 artifacts/
-*.json
+
 
 # IDE
 .vscode/

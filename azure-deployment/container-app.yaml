@@ -32,6 +32,10 @@ properties:
         value: ""  # Set via CLI
       - name: firecrawl-key
         value: ""  # Set via CLI
+      - name: apify-key
+        value: ""  # Set via CLI - Required for LinkedIn scraping
+      - name: ollama-ssh-key
+        value: ""  # Set via CLI
 
     registries:
       - server: acrb2bleadgeneu01.azurecr.io
@@ -61,6 +65,8 @@ properties:
             secretRef: supabase-key
           - name: FIRECRAWL_API_KEY
             secretRef: firecrawl-key
+          - name: APIFY_API_TOKEN
+            secretRef: apify-key
           - name: OLLAMA_HOST
             value: "http://localhost:11434"
           - name: OLLAMA_BASE_URL
@@ -105,8 +111,16 @@ properties:
 
         # IMPORTANT: Use "ollama serve" without --host/--port flags
         # Configure via OLLAMA_HOST env var instead
-        command: ["ollama"]
-        args: ["serve"]
+        command: ["/bin/sh", "-c"]
+        args: 
+          - |
+            if [ ! -z "$OLLAMA_SSH_KEY" ]; then
+              mkdir -p /root/.ollama
+              echo "$OLLAMA_SSH_KEY" > /root/.ollama/id_ed25519
+              chmod 600 /root/.ollama/id_ed25519
+              echo "SSH key configured."
+            fi
+            exec ollama serve
 
         resources:
           cpu: 0.25
@@ -121,6 +135,8 @@ properties:
             value: "-1"
           - name: OLLAMA_NUM_PARALLEL
             value: "4"
+          - name: OLLAMA_SSH_KEY
+            secretRef: ollama-ssh-key
 
         volumeMounts:
           - volumeName: ollama-data
