@@ -1,9 +1,31 @@
-# Virtual Environment
-venv/
-env/
-.venv/
+# ==============================================================================
+# SECURITY & SECRETS (CRITICAL)
+# ==============================================================================
+# Absolutely NEVER commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_ed25519
+id_ed25519.pub
+id_rsa
+id_rsa.pub
+_authToken
+secrets.env
+config/secrets.env
+*.secrets.yaml
 
-# Python
+# Azure specific secrets
+azure-deployment/container-app-working.yaml
+azure-deployment/container-app-ssh.yaml
+.identity_id_created
+
+# ==============================================================================
+# PYTHON / BACKEND
+# ==============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -24,59 +46,95 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Environment & Secrets
-.env
-secrets.env
-config/secrets.env
-!.env.example
-!*.example.json
-
-# Logs
-logs/
-*.log
-
-# Artifacts
-artifacts/
-
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Virtual Environments
+venv/
+env/
+.venv/
+.kilocode/
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Debug & Test Output
-debug_data/
+.mypy_cache/
 test_output/
 test_outputs/
 
-# Browser Data
+# Results & Artifacts
+results/
+artifacts/
+benchmarks/results/
+downloads/
+debug_data/
 browser_data/
 tests/browser_data/
 
-# Results
-results/
-benchmarks/results/
+# Logs
+logs/
+*.log
 
-# Azure Deployment Secrets (NEVER commit these)
-config/ollama_key
-azure-deployment/container-app-working.yaml
-azure-deployment/container-app-ssh.yaml
-.identity_id_created
-*.secrets.yaml
+# ==============================================================================
+# NODE.JS / FRONTEND / NEXT.JS
+# ==============================================================================
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
 
-# Root-level deployment files (use azure-deployment/ instead)
-/container-app.yaml
-/container-app-*.yaml
+# Next.js build output
+.next/
+out/
+
+# Production build
+/build
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# ==============================================================================
+# IDE & OS
+# ==============================================================================
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# IntelliJ / PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim / Editor
+*.swp
+*.swo
+*~
+
+# ==============================================================================
+# EXCEPTIONS & WHITELISTS
+# ==============================================================================
+# Ensure deployment scripts and configs are tracked (unless they are secrets above)
+!azure-deployment/
+!azure-deployment/scripts/
+!azure-deployment/*.yaml
