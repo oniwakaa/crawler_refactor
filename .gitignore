@@ -38,7 +38,7 @@ logs/
 
 # Artifacts
 artifacts/
-*.json
+
 
 # IDE
 .vscode/
