@@ -60,8 +60,8 @@ async def create_search(request: SearchRequest, background_tasks: BackgroundTask
         # Note: This will fail until the table is created
         supabase.table("jobs").insert(job_data).execute()
         
-        # TODO: Trigger actual background pipeline
-        # background_tasks.add_task(run_pipeline_task, job_id, request.query)
+        # Trigger actual background pipeline
+        background_tasks.add_task(run_pipeline_task, job_id, request.query, request.max_results)
         
     except Exception as e:
         logger.error("Failed to create job", error=str(e))
@@ -69,6 +69,64 @@ async def create_search(request: SearchRequest, background_tasks: BackgroundTask
         return {"job_id": job_id, "status": "pending", "note": "DB write might have failed if schema not applied"}
 
     return {"job_id": job_id, "status": "pending"}
+
+async def run_pipeline_task(job_id: str, query: str, max_results: int):
+    """
+    Background task to run the B2B pipeline and persist results.
+    """
+    from pipelines.b2b_lead_pipeline import B2BLeadPipeline, PipelineConfig
+    from models.lead import LeadProfile
+    import datetime
+
+    logger.info("Starting background pipeline task", job_id=job_id)
+    
+    try:
+        # Update job status to running
+        supabase.table("jobs").update({"status": "running"}).eq("id", job_id).execute()
+
+        config = PipelineConfig(
+            query=query,
+            max_results=max_results,
+            # Ensure settings path is correct for container environment
+            # In container, app is in /app, so settings should be in /app/config/settings.yaml
+            settings_path="config/settings.yaml" 
+        )
+
+        async with B2BLeadPipeline(config) as pipeline:
+            result_batch = await pipeline.run_pipeline()
+            
+        # Persist leads to Supabase
+        leads_data = []
+        for lead in result_batch.leads:
+            # Convert LeadProfile to dict and add job_id
+            lead_dict = lead.model_dump()
+            lead_dict["job_id"] = job_id
+            # Clean up fields that might not match schema 1:1 if needed, 
+            # but schema.sql suggests broad compatibility (jsonb metadata)
+            leads_data.append(lead_dict)
+            
+        if leads_data:
+            # Batch insert leads
+            supabase.table("leads").insert(leads_data).execute()
+        
+        # Update job completion status
+        supabase.table("jobs").update({
+            "status": "completed",
+            "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "result_count": len(result_batch.leads),
+            "metadata": result_batch.metadata
+        }).eq("id", job_id).execute()
+        
+        logger.info("Pipeline task completed successfully", job_id=job_id, count=len(result_batch.leads))
+
+    except Exception as e:
+        logger.error("Pipeline task failed", job_id=job_id, error=str(e))
+        # Update job error status
+        supabase.table("jobs").update({
+            "status": "failed", 
+            "error": str(e),
+            "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }).eq("id", job_id).execute()
 
 @app.get("/jobs/{job_id}")
 async def get_job_status(job_id: str):

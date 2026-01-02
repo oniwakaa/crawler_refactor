@@ -298,6 +298,7 @@ class LlamaWrapper:
         
         # Client is managed by context manager (__aenter__/__aexit__)
         start_time = time.time()
+        
         response = await self.ollama_client.post(
             f"{self.ollama_host}/api/generate",
             json=payload
@@ -618,6 +619,7 @@ class LlamaWrapper:
         
         # Client is managed by context manager (__aenter__/__aexit__)
         start_time = time.time()
+        
         response = await self.ollama_client.post(
             f"{self.ollama_host}/api/generate",
             json=payload
