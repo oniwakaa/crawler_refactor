@@ -1,6 +1,7 @@
 -- Jobs Table
 create table if not exists public.jobs (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid, -- Reference to auth.users, can be nullable for anon jobs if needed, but usually required
   query text not null,
   status text not null default 'pending',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -18,16 +19,20 @@ create table if not exists public.leads (
   company text,
   role text,
   email text,
-  linkedin_url text,
+  phone_number text,
+  linkedin text,
   company_domain text,
   confidence_score float,
+  source_url text,
   metadata jsonb,
+  extraction_timestamp timestamp with time zone,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
 -- Indexes
 create index if not exists idx_leads_job_id on public.leads(job_id);
 create index if not exists idx_jobs_created_at on public.jobs(created_at desc);
+create index if not exists idx_jobs_user_id on public.jobs(user_id);
 
 -- Conversations Table
 create table if not exists public.conversations (
@@ -50,5 +55,8 @@ create table if not exists public.messages (
 
 -- Add conversation_id to leads
 alter table public.leads add column if not exists conversation_id uuid references public.conversations(id);
+alter table public.leads add column if not exists phone_number text;
+alter table public.leads add column if not exists source_url text;
+alter table public.leads add column if not exists extraction_timestamp timestamp with time zone;
 create index if not exists idx_messages_conversation_id on public.messages(conversation_id);
 create index if not exists idx_conversations_user_id on public.conversations(user_id);

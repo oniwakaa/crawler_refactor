@@ -52,7 +52,7 @@ properties:
       # Main Application Container
       # ============================
       - name: main-app
-        image: acrb2bleadgeneu01.azurecr.io/b2b-backend:v3
+        image: acrb2bleadgeneu01.azurecr.io/b2b-backend:v4
 
         resources:
           cpu: 0.5

@@ -25,6 +25,7 @@ class SearchRequest(BaseModel):
     query: str
     max_results: int = 10
     country: Optional[str] = None
+    user_id: str
 
 @app.get("/")
 async def root():
@@ -53,6 +54,7 @@ async def create_search(request: SearchRequest, background_tasks: BackgroundTask
     try:
         job_data = {
             "id": job_id,
+            "user_id": request.user_id,
             "query": request.query,
             "status": "pending",
             "metadata": request.model_dump()

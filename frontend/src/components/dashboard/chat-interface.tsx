@@ -12,6 +12,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/contexts/sidebar-context";
+import { createClient } from "@/lib/supabase/client";
+import { AzureService } from "@/lib/api/azure";
+import { User } from "@supabase/supabase-js";
 
 // --- Types ---
 
@@ -113,8 +116,62 @@ export function ChatInterface() {
     const [value, setValue] = useState("");
     const [messages, setMessages] = useState<Message[]>([]);
     const [isTyping, setIsTyping] = useState(false);
+    const [user, setUser] = useState<User | null>(null);
+    const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+    const supabase = createClient();
     const { textareaRef, adjustHeight } = useAutoResizeTextarea({ minHeight: 60, maxHeight: 200 });
     const { sidebarWidth } = useSidebar();
+
+    useEffect(() => {
+        const getUser = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            setUser(user);
+        };
+        getUser();
+    }, []);
+
+    // Subscribe to leads when we have a job ID
+    useEffect(() => {
+        if (!currentJobId) return;
+
+        const channel = supabase
+            .channel('realtime-leads')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'leads',
+                    filter: `job_id=eq.${currentJobId}`
+                },
+                (payload) => {
+                    const newLead = payload.new;
+                    setMessages(prev => {
+                        const lastMsg = prev[prev.length - 1];
+                        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.id === `resp-${currentJobId}`) {
+                            // Update existing assistant message
+                            return prev.map(msg => {
+                                if (msg.id === `resp-${currentJobId}`) {
+                                    return {
+                                        ...msg,
+                                        data: [...(msg.data || []), newLead]
+                                    };
+                                }
+                                return msg;
+                            });
+                        } else {
+                            // Create new assistant message if not exists (should rarely happen if we init it)
+                            return prev;
+                        }
+                    });
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [currentJobId, supabase]);
 
     const scrollToBottom = () => {
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -142,24 +199,34 @@ export function ChatInterface() {
         setIsTyping(true);
 
         try {
-            // Simulate Backend Delay
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (!user) {
+                toast.error("You must be logged in to search.");
+                setIsTyping(false);
+                return;
+            }
 
+            // Start Azure Search
+            const response = await AzureService.startSearch({
+                query: value,
+                user_id: user.id
+            });
+
+            const jobId = response.job_id;
+            setCurrentJobId(jobId);
+
+            // Create placeholder assistant message
             const assistantMsg: Message = {
-                id: (Date.now() + 1).toString(),
+                id: `resp-${jobId}`,
                 role: 'assistant',
-                content: "I've started searching for leads matching your criteria. Here is a preview of what I found:",
+                content: "I've started searching. Results will appear as they are found...",
                 created_at: Date.now(),
-                data: [
-                    { name: "Alessandro Rossi", company: "Barilla", role: "Head of Sales", email: "a.rossi@barilla.com" },
-                    { name: "Giulia Bianchi", company: "Ferrero", role: "Sales Director", email: "g.bianchi@ferrero.com" },
-                    { name: "Marco Verdi", company: "Lavazza", role: "VP Sales", email: "m.verdi@lavazza.com" },
-                ]
+                data: []
             };
             setMessages(prev => [...prev, assistantMsg]);
 
-        } catch {
-            toast.error("Failed to process request");
+        } catch (error) {
+            console.error(error);
+            toast.error("Failed to start search request");
         } finally {
             setIsTyping(false);
         }

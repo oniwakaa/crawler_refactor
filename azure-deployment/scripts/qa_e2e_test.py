@@ -29,7 +29,8 @@ def run_test(fqdn):
     
     payload = {
         "query": "Sales Manager Diary Industry in Italy",
-        "max_results": 5 
+        "max_results": 5,
+        "user_id": "00000000-0000-0000-0000-000000000000" # Test User ID
     }
     
     print(f"Starting Search Request to {search_endpoint}...")
@@ -57,7 +58,7 @@ def run_test(fqdn):
     max_retries = 60 # 5 minutes max (5s * 60)
     for i in range(max_retries):
         try:
-            status_resp = requests.get(status_endpoint, timeout=10)
+            status_resp = requests.get(status_endpoint, timeout=30)
             status_resp.raise_for_status()
             status_data = status_resp.json()
             status = status_data.get("status")
