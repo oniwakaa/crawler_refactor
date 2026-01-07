@@ -15,10 +15,11 @@ import {
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { useSidebar } from "@/contexts/sidebar-context"
+import { useChat } from "@/contexts/chat-context"
 
 export function AppSidebar() {
     const { isSidebarOpen, setIsSidebarOpen } = useSidebar()
-    const pathname = usePathname()
+    const { createNewChat, conversations, selectChat, currentChatId } = useChat()
     const router = useRouter()
     const supabase = createClient()
 
@@ -26,6 +27,11 @@ export function AppSidebar() {
         await supabase.auth.signOut()
         router.push("/login")
     }
+
+    const handleNewChat = () => {
+        createNewChat()
+        // Optional: Close sidebar on mobile if needed, or focus input
+    };
 
     return (
         <aside
@@ -62,6 +68,7 @@ export function AppSidebar() {
                             !isSidebarOpen && "justify-center p-0"
                         )}
                         variant="outline"
+                        onClick={handleNewChat}
                     >
                         <Plus className="h-4 w-4 shrink-0" />
                         {isSidebarOpen && "New Chat"}
@@ -70,7 +77,21 @@ export function AppSidebar() {
 
                 <ScrollArea className="h-[calc(100vh-250px)]">
                     <nav className="grid gap-1 px-2">
-                        {/* Real Conversations will go here */}
+                        {conversations.map((chat) => (
+                            <Button
+                                key={chat.id}
+                                variant={currentChatId === chat.id ? "secondary" : "ghost"}
+                                className={cn(
+                                    "justify-start gap-2 overflow-hidden text-left font-normal",
+                                    !isSidebarOpen && "justify-center px-2"
+                                )}
+                                onClick={() => selectChat(chat.id)}
+                            >
+                                <span className="truncate w-full block">
+                                    {isSidebarOpen ? (chat.title || "New Conversation") : (chat.title?.[0]?.toUpperCase() || "C")}
+                                </span>
+                            </Button>
+                        ))}
                     </nav>
                 </ScrollArea>
             </div>

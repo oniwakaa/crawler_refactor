@@ -15,6 +15,7 @@ create table if not exists public.jobs (
 create table if not exists public.leads (
   id uuid primary key default gen_random_uuid(),
   job_id uuid references public.jobs(id),
+  user_id uuid, -- For RLS and ownership
   name text,
   company text,
   role text,
