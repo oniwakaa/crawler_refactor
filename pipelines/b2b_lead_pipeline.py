@@ -55,7 +55,7 @@ logger = structlog.get_logger()
 class PipelineConfig:
     """Pipeline configuration"""
     query: str
-    max_results: int = 150  # Default to 150 to allow full use of Firecrawl discovery (3 calls x 50)
+    max_results: int = 5  # Default to 150 to allow full use of Firecrawl discovery (3 calls x 50)
     settings_path: str = str(PROJECT_ROOT / "config/settings.yaml")
     output_path: Optional[str] = None
     verbose: bool = False
