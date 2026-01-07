@@ -63,7 +63,7 @@ async def create_search(request: SearchRequest, background_tasks: BackgroundTask
         supabase.table("jobs").insert(job_data).execute()
         
         # Trigger actual background pipeline
-        background_tasks.add_task(run_pipeline_task, job_id, request.query, request.max_results)
+        background_tasks.add_task(run_pipeline_task, job_id, request.query, request.max_results, request.user_id)
         
     except Exception as e:
         logger.error("Failed to create job", error=str(e))
@@ -72,7 +72,7 @@ async def create_search(request: SearchRequest, background_tasks: BackgroundTask
 
     return {"job_id": job_id, "status": "pending"}
 
-async def run_pipeline_task(job_id: str, query: str, max_results: int):
+async def run_pipeline_task(job_id: str, query: str, max_results: int, user_id: str):
     """
     Background task to run the B2B pipeline and persist results.
     """
@@ -103,6 +103,7 @@ async def run_pipeline_task(job_id: str, query: str, max_results: int):
             # Convert LeadProfile to dict and add job_id
             lead_dict = lead.model_dump()
             lead_dict["job_id"] = job_id
+            lead_dict["user_id"] = user_id
             # Clean up fields that might not match schema 1:1 if needed, 
             # but schema.sql suggests broad compatibility (jsonb metadata)
             leads_data.append(lead_dict)

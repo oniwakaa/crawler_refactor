@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/dashboard/sidebar"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { SidebarProvider } from "@/contexts/sidebar-context"
+import { ChatProvider } from "@/contexts/chat-context"
 
 interface DashboardLayoutProps {
     children: React.ReactNode
@@ -30,7 +31,9 @@ function DashboardLayoutContent({ children }: DashboardLayoutProps) {
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
     return (
         <SidebarProvider>
-            <DashboardLayoutContent>{children}</DashboardLayoutContent>
+            <ChatProvider>
+                <DashboardLayoutContent>{children}</DashboardLayoutContent>
+            </ChatProvider>
         </SidebarProvider>
     )
 }
