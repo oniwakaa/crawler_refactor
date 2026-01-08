@@ -30,7 +30,7 @@ def run_test(fqdn):
     payload = {
         "query": "Sales Manager Diary Industry in Italy",
         "max_results": 5,
-        "user_id": "00000000-0000-0000-0000-000000000000" # Test User ID
+        "user_id": "240a01b6-3d01-4702-82d5-5158673388a0" # Valid Test User ID
     }
     
     print(f"Starting Search Request to {search_endpoint}...")
