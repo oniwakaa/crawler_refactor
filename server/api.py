@@ -23,7 +23,7 @@ app.add_middleware(
 
 class SearchRequest(BaseModel):
     query: str
-    max_results: int = 10
+    max_results: int = 2
     country: Optional[str] = None
     user_id: str
 
