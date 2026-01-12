@@ -31,7 +31,7 @@ validation:
 apify:
   actor_id: "oJMZe85C0opC0xcx2"
   batch_size: 20
-  timeout_seconds: 120
+  timeout_seconds: 3600
   retries: 3
   # api_token should be set via environment variable APIFY_API_TOKEN
 

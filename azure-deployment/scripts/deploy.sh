@@ -255,7 +255,9 @@ configure_secrets() {
             supabase-url="${SUPABASE_URL:-SET_VIA_ENV}" \
             supabase-key="${SUPABASE_KEY:-SET_VIA_ENV}" \
             firecrawl-key="${FIRECRAWL_KEY:-SET_VIA_ENV}" \
+            apify-key="${APIFY_KEY:-SET_VIA_ENV}" \
             ollama-ssh-key="$OLLAMA_SSH_KEY_CONTENT" \
+            allowed-origins="${ALLOWED_ORIGINS:-https://amplify-staging.vercel.app}" \
         --only-show-errors
 
     log_success "Secrets configured"

@@ -36,6 +36,8 @@ properties:
         value: ""  # Set via CLI - Required for LinkedIn scraping
       - name: ollama-ssh-key
         value: ""  # Set via CLI
+      - name: allowed-origins
+        value: ""  # Set via CLI
 
     registries:
       - server: acrb2bleadgeneu01.azurecr.io
@@ -52,7 +54,7 @@ properties:
       # Main Application Container
       # ============================
       - name: main-app
-        image: acrb2bleadgeneu01.azurecr.io/b2b-backend:v4
+        image: acrb2bleadgeneu01.azurecr.io/b2b-backend:v6
 
         resources:
           cpu: 0.5
@@ -79,6 +81,8 @@ properties:
             value: "8000"
           - name: LOG_LEVEL
             value: "INFO"
+          - name: ALLOWED_ORIGINS
+            secretRef: allowed-origins
 
         probes:
           - type: Startup
