@@ -30,7 +30,7 @@ def get_cors_regex() -> str:
                 patterns.append(re.escape(origin.strip()))
     
     # Add localhost for dev
-    if os.getenv("ENVIRONMENT") == "development":
+    if os.getenv("ENVIRONMENT", "development") == "development":
         patterns.extend([
             r"http://localhost:3000",
             r"http://localhost:5173"
