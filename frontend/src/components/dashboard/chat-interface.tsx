@@ -158,7 +158,7 @@ export function ChatInterface() {
             {/* Scrollable Messages Area */}
             <div className="flex-1 overflow-y-auto w-full relative custom-scrollbar">
                 <div className={cn(
-                    "w-full max-w-3xl mx-auto px-6 transition-all duration-500",
+                    "w-full max-w-6xl mx-auto px-6 transition-all duration-500",
                     isEmpty ? "h-full flex flex-col items-center justify-center p-6" : "pt-20 pb-40"
                 )}>
                     {/* Empty State Header */}
@@ -202,7 +202,7 @@ export function ChatInterface() {
                                         )}
                                         {msg.data && msg.data.length > 0 && (
                                             <div className="mt-4 border border-white/10 rounded-xl overflow-hidden bg-white/5 backdrop-blur-sm">
-                                                <div className="overflow-x-auto max-h-[400px] overflow-y-auto custom-scrollbar">
+                                                <div className="overflow-x-auto max-h-[600px] overflow-y-auto custom-scrollbar">
                                                     <table className="w-full text-sm text-left relative">
                                                         <thead className="bg-white/5 text-white/60 sticky top-0 z-10 backdrop-blur-md">
                                                             <tr>

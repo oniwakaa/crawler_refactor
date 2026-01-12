@@ -99,7 +99,7 @@ export function AppSidebar() {
             {/* Account Section */}
             <div className="border-t p-2">
                 <div className="flex flex-col gap-1">
-                    <Button
+                    {/* <Button
                         variant="ghost"
                         className={cn("justify-start gap-2", !isSidebarOpen && "justify-center")}
                         asChild
@@ -108,7 +108,7 @@ export function AppSidebar() {
                             <Settings className="h-4 w-4 shrink-0" />
                             {isSidebarOpen && <span>Settings</span>}
                         </Link>
-                    </Button>
+                    </Button> */}
                     <Button
                         variant="ghost"
                         className={cn("justify-start gap-2 text-red-500 hover:text-red-600 hover:bg-red-500/10", !isSidebarOpen && "justify-center")}
