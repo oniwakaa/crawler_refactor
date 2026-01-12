@@ -16,91 +16,36 @@ logger = structlog.get_logger()
 app = FastAPI(title="B2B Lead Gen API")
 
 
-class HybridCorsMiddleware:
-    """Hybrid CORS middleware supporting both explicit origins and regex patterns"""
 
-    def __init__(self, app):
-        self.app = app
-        self.vercel_pattern = re.compile(
-            r"^https://amplify-[a-zA-Z0-9-]+\.vercel\.app$"
-        )
-        self._explicit_origins = None
-
-    @property
-    def explicit_origins(self) -> List[str]:
-        """Lazy load explicit origins from environment"""
-        if self._explicit_origins is None:
-            env_origins = os.getenv("ALLOWED_ORIGINS", "")
-            if env_origins:
-                self._explicit_origins = [o.strip() for o in env_origins.split(",")]
-            else:
-                self._explicit_origins = [
-                    "https://amplify-staging.vercel.app",
-                    "https://amplify-production.vercel.app",
-                ]
-
-                # Add localhost in development
-                if os.getenv("ENVIRONMENT") == "development":
-                    self._explicit_origins.extend(
-                        [
-                            "http://localhost:3000",
-                            "http://localhost:5173",
-                        ]
-                    )
-        return self._explicit_origins
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        async def send_wrapper(message):
-            if message["type"] == "http.response.start":
-                headers = dict(scope.get("headers", []))
-                origin = headers.get(b"origin", b"").decode()
-
-                if origin and self._is_allowed_origin(origin):
-                    headers_list = list(message.get("headers", []))
-                    headers_list.extend(
-                        [
-                            (b"Access-Control-Allow-Origin", origin.encode()),
-                            (b"Access-Control-Allow-Credentials", b"true"),
-                            (
-                                b"Access-Control-Allow-Methods",
-                                b"GET, POST, PUT, DELETE, OPTIONS",
-                            ),
-                            (
-                                b"Access-Control-Allow-Headers",
-                                b"Content-Type, Authorization, X-Requested-With",
-                            ),
-                            (b"Access-Control-Max-Age", b"86400"),
-                        ]
-                    )
-                    message["headers"] = headers_list
-
-            await send(message)
-
-        await self.app(scope, receive, send_wrapper)
-
-    def _is_allowed_origin(self, origin: str) -> bool:
-        """Check if origin is explicitly allowed or matches Vercel pattern"""
-        if origin in self.explicit_origins:
-            return True
-        if self.vercel_pattern.match(origin):
-            return True
-        return False
+def get_cors_regex() -> str:
+    """Generate regex for ALLOWED_ORIGINS + Vercel wildcard"""
+    # Base pattern for Vercel preview/staging URLs
+    patterns = [r"https://amplify-[a-zA-Z0-9-]+\.vercel\.app"]
+    
+    # Add explicit origins from env
+    env_origins = os.getenv("ALLOWED_ORIGINS", "")
+    if env_origins:
+        for origin in env_origins.split(","):
+            if origin.strip():
+                patterns.append(re.escape(origin.strip()))
+    
+    # Add localhost for dev
+    if os.getenv("ENVIRONMENT") == "development":
+        patterns.extend([
+            r"http://localhost:3000",
+            r"http://localhost:5173"
+        ])
+        
+    return f"^({'|'.join(patterns)})$"
 
 
-# Apply hybrid middleware
-app.add_middleware(HybridCorsMiddleware)
-
-# Standard CORS middleware with minimal settings
+# Configure CORS with dynamic regex to handle both wildcards and explicit domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],  # Handled by custom middleware
+    allow_origin_regex=get_cors_regex(),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -121,7 +66,8 @@ async def health_check():
     """Health check endpoint for Azure/Container probes"""
     try:
         # Lightweight DB check
-        # status = supabase.table("jobs").select("count", count="exact").limit(0).execute()
+        # Lightweight DB check
+        status = supabase.table("jobs").select("count", count="exact").limit(0).execute()
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         logger.error("Health check failed", error=str(e))

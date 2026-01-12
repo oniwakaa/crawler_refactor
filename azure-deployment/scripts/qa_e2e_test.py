@@ -4,6 +4,40 @@ import json
 import time
 import subprocess
 import sys
+import os
+from dotenv import load_dotenv
+from supabase import create_client
+
+# Load environment variables
+load_dotenv()
+
+def get_valid_user_id():
+    """Fetch a valid user_id from Supabase to ensure FK constraints are met."""
+    print("Fetching valid user_id from Supabase...")
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+    
+    if not url or not key:
+        print("Warning: Missing SUPABASE_URL or keys in .env. Using fallback ID.")
+        return "240a01b6-3d01-4702-82d5-5158673388a0" # Fallback
+
+    try:
+        supabase = create_client(url, key)
+        # Try profiles
+        response = supabase.table("profiles").select("id").limit(1).execute()
+        if response.data:
+            return response.data[0]['id']
+        
+        # Try jobs
+        response = supabase.table("jobs").select("user_id").limit(1).execute()
+        if response.data:
+             return response.data[0]['user_id']
+             
+        print("Warning: No profiles or jobs found. Using fallback ID.")
+        return "240a01b6-3d01-4702-82d5-5158673388a0"
+    except Exception as e:
+        print(f"Error fetching user_id: {e}")
+        return "240a01b6-3d01-4702-82d5-5158673388a0"
 
 def get_azure_fqdn(app_name="b2b-backend-app", resource_group="rg-b2b-leadgen-eu"):
     print(f"Fetching FQDN for {app_name}...")
@@ -27,10 +61,13 @@ def run_test(fqdn):
     base_url = f"https://{fqdn}"
     search_endpoint = f"{base_url}/search"
     
+    user_id = get_valid_user_id()
+    print(f"Using User ID: {user_id}")
+    
     payload = {
-        "query": "Sales Manager Diary Industry in Italy",
+        "query": "Founder Italiani of Tech Startups",
         "max_results": 5,
-        "user_id": "240a01b6-3d01-4702-82d5-5158673388a0" # Valid Test User ID
+        "user_id": user_id
     }
     
     print(f"Starting Search Request to {search_endpoint}...")
@@ -47,6 +84,10 @@ def run_test(fqdn):
         print(f"Job Initiated. ID: {job_id}")
     except Exception as e:
         print(f"Failed to initiate search: {e}")
+        try:
+             print(f"Response: {resp.text}")
+        except:
+             pass
         # Capture logs immediately if failed
         capture_logs(tail=50)
         sys.exit(1)

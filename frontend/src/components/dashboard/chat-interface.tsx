@@ -132,7 +132,14 @@ export function ChatInterface() {
         try {
             await sendMessage(content);
         } catch (error) {
-            console.error("Failed to send message", error);
+            console.error(error);
+            // Handle error response from API (e.g. 500)
+            const errorMessage = error instanceof Error ? error.message : "Failed to start search request";
+            toast.error(errorMessage);
+            // Remove the placeholder assistant message if it was added? 
+            // Actually, we haven't added it yet in the try block before the await.
+            // Wait, looking at the code, it adds the placeholder *after* the await success.
+            // So if it fails, no assistant message is added. Correct.
         } finally {
             setIsTyping(false);
         }
