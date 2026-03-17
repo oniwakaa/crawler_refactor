@@ -1,4 +1,3 @@
-
 import os
 from apify_client import ApifyClient
 import logging
@@ -8,8 +7,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def test_apify_scraping():
-    # User's provided token
-    API_TOKEN = "apify_api_RdvP7Fd5uW4a6hPbgS6pdR5B0iBw4g0uLdTJ"
+    """Test Apify scraping connection using environment variable for API token."""
+    # Get API token from environment
+    API_TOKEN = os.getenv("APIFY_API_TOKEN")
+    if not API_TOKEN:
+        raise ValueError("APIFY_API_TOKEN environment variable not set. Please set it before running this test.")
+    
     ACTOR_ID = "oJMZe85C0opC0xcx2"
     
     # Initialize client
