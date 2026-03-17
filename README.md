@@ -43,7 +43,6 @@ Finding qualified B2B leads manually is time-consuming and error-prone. This pip
 3. **Install dependencies**
    ```bash
    pip install -r requirements.txt
-   playwright install chromium
    ```
 
 4. **Configure environment variables**
@@ -84,12 +83,8 @@ Finding qualified B2B leads manually is time-consuming and error-prone. This pip
 | `OLLAMA_HOST` | Ollama server URL | No | `http://localhost:11434` |
 | `ORCHESTRATOR_MODEL` | Model for query planning | No | `gpt-oss:120b-cloud` |
 | `EXTRACTOR_MODEL` | Model for data extraction | No | `gpt-oss:20b-cloud` |
-| `ENRICHER_MODEL` | Model for lead enrichment | No | `gpt-oss:20b-cloud` |
 | `ALLOWED_ORIGINS` | CORS allowed origins | Backend only | None |
-| `CRAWL4AI_HEADLESS` | Run browser headless | No | `true` |
-| `CRAWL4AI_TIMEOUT` | Browser timeout seconds | No | `30` |
 | `LOG_LEVEL` | Logging verbosity | No | `INFO` |
-
 ## Usage Examples
 
 ### Basic Search
