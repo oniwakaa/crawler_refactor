@@ -16,7 +16,6 @@ logger = structlog.get_logger()
 app = FastAPI(title="B2B Lead Gen API")
 
 
-
 def get_cors_regex() -> str:
     """Generate regex for ALLOWED_ORIGINS + Vercel wildcard"""
     # Base pattern for Vercel preview/staging URLs
@@ -66,7 +65,6 @@ async def health_check():
     """Health check endpoint for Azure/Container probes"""
     try:
         # Lightweight DB check
-        # Lightweight DB check
         status = supabase.table("jobs").select("count", count="exact").limit(0).execute()
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
@@ -91,12 +89,11 @@ async def create_search(request: SearchRequest, background_tasks: BackgroundTask
             "status": "pending",
             "metadata": request.model_dump(),
         }
-        # Note: This will fail until the table is created
         supabase.table("jobs").insert(job_data).execute()
 
         # Trigger actual background pipeline
         background_tasks.add_task(run_pipeline_task, job_id, request.query, request.max_results, request.user_id)
-        
+
     except Exception as e:
         logger.error("Failed to create job", error=str(e))
         # Return 500 error so frontend knows it failed
@@ -138,7 +135,7 @@ async def run_pipeline_task(job_id: str, query: str, max_results: int, user_id: 
             lead_dict = lead.model_dump()
             lead_dict["job_id"] = job_id
             lead_dict["user_id"] = user_id
-            # Clean up fields that might not match schema 1:1 if needed, 
+            # Clean up fields that might not match schema 1:1 if needed,
             # but schema.sql suggests broad compatibility (jsonb metadata)
             leads_data.append(lead_dict)
 
